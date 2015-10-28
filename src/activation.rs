@@ -37,6 +37,14 @@ impl Node for Activation {
 
     /// gradients: NxP
     fn back_prop(&mut self, ctx: &matrix::Context, input: &ClMatrix<f32>, gradients: &ClMatrix<f32>) {
+        let input_t = ClMatrix::new(ctx, input.rows(), input.columns(), ClMatrixMode::Mut);
+        let relu_dx = ClMatrix::new(ctx, 1, self.weights.columns(), ClMatrixMode::Mut);
+
+        input.transpose(ctx, &input_t);
+        self.in_sum.dmax(ctx, 0.0, &relu_dx);
+        relu_dx.multiply(ctx, gradients, &relu_dx);
+
+        //input_t.dot(ctx, &relu_dx, &self.wg);
         /*for i in 0..input.len() {
             self.ig[i] = 0.0;
             self.wg[i] = 0.0;
