@@ -1,4 +1,3 @@
 extern crate matrix;
 
-pub mod activation;
-pub mod node;
+pub mod graph;
