@@ -4,13 +4,16 @@ use std::sync::mpsc::channel;
 use matrix::{self, ClMatrix, ClMatrixMode};
 
 // A function that takes an opencl context, a list of inputs, and a list of outputs
-pub type Operation = Fn(&matrix::Context, &[&ClMatrix<f32>], &[&ClMatrix<f32>]);
+pub type Operation = Fn(&matrix::Context,
+                        &mut Graph,
+                        NodeIndex);
 
 pub struct Node {
-    op: Rc<Operation>,
-    op_d: Vec<Rc<Operation>>, // Derivative ops, with respect to each input, respectively
+    forward: Rc<Operation>, // Operation to perform on forward pass
+    backward: Vec<Rc<Operation>>, // Derivative ops, with respect to each input, respectively
     pub inputs: Vec<VarIndex>,
     pub outputs: Vec<VarIndex>,
+    pub out_events: Vec<matrix::cl_matrix::Event>,
 }
 
 pub struct Graph {
@@ -28,8 +31,8 @@ impl Graph {
 
     pub fn add_node(&mut self,
                     ctx: &matrix::Context,
-                    op: Rc<Operation>,
-                    op_d: Vec<Rc<Operation>>,
+                    forward: Rc<Operation>,
+                    backward: Vec<Rc<Operation>>,
                     out_shapes: &[(u64, u64)])
                     -> NodeIndex {
         let mut outputs = vec![];
@@ -38,7 +41,11 @@ impl Graph {
             self.vars.push(ClMatrix::new(ctx, rows as usize, cols as usize, ClMatrixMode::Mut));
             outputs.push(var_index);
         }
-        self.nodes.push(Node { op: op, op_d: op_d, inputs: vec![], outputs: outputs });
+        self.nodes.push(Node { forward: forward,
+                               backward: backward,
+                               inputs: vec![],
+                               outputs: outputs,
+                               out_events: vec![] });
         NodeIndex(self.nodes.len()-1)
     }
 
@@ -51,7 +58,14 @@ impl Graph {
         n.get_mut(self).inputs.extend_from_slice(inputs);
     }
 
-    pub fn run(&mut self) {
+    pub fn run(&mut self, ctx: &matrix::Context) {
+        // Clear all the out_events
+        for node in &mut self.nodes {
+            node.out_events.clear();
+        }
+
+        let op = self.nodes[0].forward.clone();
+        (op)(ctx, self, NodeIndex(0));
     }
 }
 
@@ -88,13 +102,26 @@ impl NodeIndex {
 #[test]
 fn it_works() {
     let mat_mul =
-        Rc::new(move |ctx: &matrix::Context, i: &[&ClMatrix<f32>], o: &[&ClMatrix<f32>]| {
-            i[0].multiply(ctx, i[1], o[0]);
+        Rc::new(move |ctx: &matrix::Context, g: &mut Graph, n: NodeIndex| {
+            let event = {
+                let node = n.get(g);
+                let a = node.inputs[0].get(g);
+                let b = node.inputs[1].get(g);
+                let c = node.outputs[0].get(g);
+                a.cross(ctx, b, c) // c = a*b
+            };
+            n.get_mut(g).out_events.push(event);
         });
     // Derivative with respect to first input
-    let mat_mul_d0 =
+    /*let mat_mul_d0 =
         Rc::new(move |ctx: &matrix::Context, i: &[&ClMatrix<f32>], o: &[&ClMatrix<f32>]| {
-            i[1].copy_to(ctx, o[0]);
+            let event = {
+                let node = n.get(g);
+                let a = node.inputs[0].get(g);
+                let b = node.outputs[0].get(g);
+                a.copy_to(ctx, b);
+            };
+            n.get_mut().out_events.push(event);
         });
     // Derivative with respect to second input
     let mat_mul_d1 =
@@ -108,20 +135,29 @@ fn it_works() {
     let relu_d =
         Rc::new(move |ctx: &matrix::Context, i: &[&ClMatrix<f32>], o: &[&ClMatrix<f32>]| {
             i[0].dmax(ctx, 0.0, o[0]);
-        });
-
-    // Special placeholder op
-    /*let placeholder =
-        Rc::new(move |ctx: &matrix::Context, i, o| {
-            i[0].dmax(ctx, 0.0, o[0]);
         });*/
     
     let mut ctx = matrix::Context::new();
 
+    // Setup the graph
     let mut graph = Graph::new();
     let a = graph.add_variable(&ctx, (1, 2));
     let wa = graph.add_variable(&ctx, (2, 3));
-    let node = graph.add_node(&ctx, mat_mul, vec![mat_mul_d0, mat_mul_d1], &[(1, 3)]);
+    let node = graph.add_node(&ctx, mat_mul, vec![/*mat_mul_d0, mat_mul_d1*/], &[(1, 3)]);
     graph.set_node_inputs(node, &[a, wa]);
-    let out = node.get(&graph).outputs[0];
+
+    // Send some input data
+    let a_cpu = matrix::Matrix::from_vec(1, 2, vec![1.0, 1.0]);
+    let wa_cpu = matrix::Matrix::from_vec(2, 3, vec![0.5, 0.3, 0.2, 0.6, 0.7, 0.7]);
+    a.get(&graph).set(&ctx, &a_cpu);
+    wa.get(&graph).set(&ctx, &wa_cpu);
+
+    // Run the network
+    graph.run(&ctx);
+    let out = {
+        let ref out_event = node.get(&graph).out_events[0];
+        out_event.get(&ctx, node.get(&graph).outputs[0].get(&graph))
+    };
+    println!("{:?}", out);
+    assert!(false);
 }
