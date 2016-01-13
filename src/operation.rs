@@ -1,11 +1,11 @@
 use matrix::{self, ClMatrix};
 use matrix::cl_matrix::ClMatrixMode;
 
-use super::graph::{Graph, NodeIndex, VarIndex};
+use super::graph::{Node, VarIndex, VarStore};
 
 pub trait Operation {
-    fn forward(&mut self, &matrix::Context, &mut Graph, NodeIndex);
-    fn backward(&mut self, &matrix::Context, &mut Graph, NodeIndex, VarIndex);
+    fn forward(&mut self, &matrix::Context, &mut VarStore, &mut Node);
+    fn backward(&mut self, &matrix::Context, &mut VarStore, &mut Node, VarIndex);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -25,26 +25,24 @@ impl MatMul {
 }
 
 impl Operation for MatMul {
-    fn forward(&mut self, ctx: &matrix::Context, g: &mut Graph, n: NodeIndex) {
+    fn forward(&mut self, ctx: &matrix::Context, v: &mut VarStore, n: &mut Node) {
         let event = {
-            let node = n.get(g);
-            let a = node.inputs[0].get(g);
-            let b = node.inputs[1].get(g);
-            let c = node.outputs[0].get(g);
+            let a = v.get(n.inputs[0]);
+            let b = v.get(n.inputs[1]);
+            let c = v.get(n.outputs[0]);
             a.cross(ctx, b, c) // c = a*b
         };
-        n.get_mut(g).out_events.push(event);
+        n.out_events.push(event);
     }
 
-    fn backward(&mut self, ctx: &matrix::Context, g: &mut Graph, n: NodeIndex, grad: VarIndex) {
+    fn backward(&mut self, ctx: &matrix::Context, v: &mut VarStore, n: &mut Node, grad: VarIndex) {
         // Derivative with respect to first input
         let (a_event, b_event) = {
-            let node = n.get(g);
-            let a = node.inputs[0].get(g);
-            let b = node.inputs[1].get(g);
-            let a_d = node.gradients[0].get(g);
-            let b_d = node.gradients[1].get(g);
-            let g = grad.get(g);
+            let a = v.get(n.inputs[0]);
+            let b = v.get(n.inputs[1]);
+            let a_d = v.get(n.gradients[0]);
+            let b_d = v.get(n.gradients[1]);
+            let g = v.get(grad);
 
             // a_d = g*b_t
             b.transpose(ctx, &self.b_t);
@@ -56,7 +54,7 @@ impl Operation for MatMul {
 
             (a_event, b_event)
         };
-        n.get_mut(g).out_events.push(a_event);
-        n.get_mut(g).out_events.push(b_event);
+        n.out_events.push(a_event);
+        n.out_events.push(b_event);
     }
 }

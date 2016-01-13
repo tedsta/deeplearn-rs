@@ -1,12 +1,8 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use matrix::{self, ClMatrix, ClMatrixMode};
 
 use super::operation::Operation;
 
 pub struct Node {
-    op: Rc<RefCell<Box<Operation>>>,
     pub inputs: Vec<VarIndex>,
     pub scratch: Vec<VarIndex>, // Scratch variables
     pub outputs: Vec<VarIndex>,
@@ -14,50 +10,68 @@ pub struct Node {
     pub out_events: Vec<matrix::cl_matrix::Event>,
 }
 
+pub struct VarStore {
+    vars: Vec<ClMatrix<f32>>,
+}
+
+impl VarStore {
+    pub fn add(&mut self, v: ClMatrix<f32>) -> VarIndex {
+        self.vars.push(v);
+        VarIndex(self.vars.len()-1)
+    }
+
+    pub fn get<'a>(&'a self, v: VarIndex) -> &'a ClMatrix<f32> {
+        &self.vars[v.0]
+    }
+
+    pub fn get_mut<'a>(&'a mut self, v: VarIndex) -> &'a mut ClMatrix<f32> {
+        &mut self.vars[v.0]
+    }
+}
+
 pub struct Graph {
     nodes: Vec<Node>,
-    vars: Vec<ClMatrix<f32>>,
+    node_ops: Vec<Box<Operation>>,
+    var_store: VarStore,
 }
 
 impl Graph {
     pub fn new() -> Self {
         Graph {
             nodes: vec![],
-            vars: vec![],
+            node_ops: vec![],
+            var_store: VarStore { vars: vec![] },
         }
     }
 
     pub fn add_node(&mut self,
                     ctx: &matrix::Context,
-                    op: Rc<RefCell<Box<Operation>>>,
+                    op: Box<Operation>,
                     inputs: Vec<VarIndex>,
                     out_shapes: &[(u64, u64)])
                     -> NodeIndex {
         let mut outputs = vec![];
         for &(rows, cols) in out_shapes {
-            let var_index = VarIndex(self.vars.len());
-            self.vars.push(ClMatrix::new(ctx, rows as usize, cols as usize, ClMatrixMode::Mut));
+            let var_index = self.var_store.add(ClMatrix::new(ctx, rows as usize, cols as usize, ClMatrixMode::Mut));
             outputs.push(var_index);
         }
         let mut gradients = vec![];
         for input in &inputs {
-            let var_index = VarIndex(self.vars.len());
-            let (rows, cols)= (input.get(self).rows(), input.get(self).columns());
-            self.vars.push(ClMatrix::new(ctx, rows as usize, cols as usize, ClMatrixMode::Mut));
+            let (rows, cols) = (input.get(self).rows(), input.get(self).columns());
+            let var_index = self.var_store.add(ClMatrix::new(ctx, rows as usize, cols as usize, ClMatrixMode::Mut));
             gradients.push(var_index);
         }
-        self.nodes.push(Node { op: op,
-                               inputs: inputs,
+        self.nodes.push(Node { inputs: inputs,
                                scratch: vec![],
                                outputs: outputs,
                                gradients: gradients,
                                out_events: vec![] });
+        self.node_ops.push(op);
         NodeIndex(self.nodes.len()-1)
     }
 
     pub fn add_variable(&mut self, ctx: &matrix::Context, shape: (u64, u64)) -> VarIndex {
-        self.vars.push(ClMatrix::new(ctx, shape.0 as usize, shape.1 as usize, ClMatrixMode::Mut));
-        VarIndex(self.vars.len()-1)
+        self.var_store.add(ClMatrix::new(ctx, shape.0 as usize, shape.1 as usize, ClMatrixMode::Mut))
     }
 
     pub fn run(&mut self, ctx: &matrix::Context) {
@@ -66,8 +80,7 @@ impl Graph {
             node.out_events.clear();
         }
 
-        let op = self.nodes[0].op.clone();
-        op.borrow_mut().forward(ctx, self, NodeIndex(0));
+        self.node_ops[0].forward(ctx, &mut self.var_store, &mut self.nodes[0]);
     }
 }
 
@@ -78,11 +91,11 @@ pub struct VarIndex(usize);
 
 impl VarIndex {
     pub fn get<'a>(&self, g: &'a Graph) -> &'a ClMatrix<f32> {
-        &g.vars[self.0]
+        g.var_store.get(*self)
     }
 
     pub fn get_mut<'a>(&self, g: &'a mut Graph) -> &'a mut ClMatrix<f32> {
-        &mut g.vars[self.0]
+        g.var_store.get_mut(*self)
     }
 }
 
@@ -112,7 +125,7 @@ fn it_works() {
     let a = graph.add_variable(&ctx, (1, 2));
     let wa = graph.add_variable(&ctx, (2, 3));
     let node = graph.add_node(&ctx,
-                              Rc::new(RefCell::new(Box::new(MatMul::new(&ctx, (1, 2), (2, 3))))),
+                              Box::new(MatMul::new(&ctx, (1, 2), (2, 3))),
                               vec![a, wa],
                               &[(1, 3)]);
 
