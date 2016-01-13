@@ -1,7 +1,8 @@
 use matrix::{self, ClMatrix};
 use matrix::cl_matrix::ClMatrixMode;
 
-use super::graph::{Node, VarIndex, VarStore};
+use super::graph::Node;
+use super::var_store::{VarIndex, VarStore};
 
 pub trait Operation {
     fn forward(&mut self, &matrix::Context, &mut VarStore, &mut Node);

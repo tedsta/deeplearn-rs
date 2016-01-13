@@ -1,38 +1,19 @@
 use matrix::{self, ClMatrix, ClMatrixMode};
 
 use super::operation::Operation;
+use super::var_store::{VarIndex, VarStore};
 
 pub struct Node {
     pub inputs: Vec<VarIndex>,
-    pub scratch: Vec<VarIndex>, // Scratch variables
     pub outputs: Vec<VarIndex>,
     pub gradients: Vec<VarIndex>, // gradients on inputs
     pub out_events: Vec<matrix::cl_matrix::Event>,
 }
 
-pub struct VarStore {
-    vars: Vec<ClMatrix<f32>>,
-}
-
-impl VarStore {
-    pub fn add(&mut self, v: ClMatrix<f32>) -> VarIndex {
-        self.vars.push(v);
-        VarIndex(self.vars.len()-1)
-    }
-
-    pub fn get<'a>(&'a self, v: VarIndex) -> &'a ClMatrix<f32> {
-        &self.vars[v.0]
-    }
-
-    pub fn get_mut<'a>(&'a mut self, v: VarIndex) -> &'a mut ClMatrix<f32> {
-        &mut self.vars[v.0]
-    }
-}
-
 pub struct Graph {
     nodes: Vec<Node>,
     node_ops: Vec<Box<Operation>>,
-    var_store: VarStore,
+    pub var_store: VarStore,
 }
 
 impl Graph {
@@ -40,7 +21,7 @@ impl Graph {
         Graph {
             nodes: vec![],
             node_ops: vec![],
-            var_store: VarStore { vars: vec![] },
+            var_store: VarStore::new(),
         }
     }
 
@@ -50,22 +31,25 @@ impl Graph {
                     inputs: Vec<VarIndex>,
                     out_shapes: &[(u64, u64)])
                     -> NodeIndex {
+        // Create output variables
         let mut outputs = vec![];
         for &(rows, cols) in out_shapes {
             let var_index = self.var_store.add(ClMatrix::new(ctx, rows as usize, cols as usize, ClMatrixMode::Mut));
             outputs.push(var_index);
         }
+        // Create gradient variables
         let mut gradients = vec![];
         for input in &inputs {
             let (rows, cols) = (input.get(self).rows(), input.get(self).columns());
             let var_index = self.var_store.add(ClMatrix::new(ctx, rows as usize, cols as usize, ClMatrixMode::Mut));
             gradients.push(var_index);
         }
+        // Create the node
         self.nodes.push(Node { inputs: inputs,
-                               scratch: vec![],
                                outputs: outputs,
                                gradients: gradients,
                                out_events: vec![] });
+        // Add the corresponding node op
         self.node_ops.push(op);
         NodeIndex(self.nodes.len()-1)
     }
@@ -81,21 +65,6 @@ impl Graph {
         }
 
         self.node_ops[0].forward(ctx, &mut self.var_store, &mut self.nodes[0]);
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#[derive(Copy, Clone)]
-pub struct VarIndex(usize);
-
-impl VarIndex {
-    pub fn get<'a>(&self, g: &'a Graph) -> &'a ClMatrix<f32> {
-        g.var_store.get(*self)
-    }
-
-    pub fn get_mut<'a>(&self, g: &'a mut Graph) -> &'a mut ClMatrix<f32> {
-        g.var_store.get_mut(*self)
     }
 }
 
