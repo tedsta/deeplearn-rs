@@ -27,7 +27,7 @@ impl VarStore {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct VarIndex(usize);
 
 impl VarIndex {

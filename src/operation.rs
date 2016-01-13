@@ -2,11 +2,11 @@ use matrix::{self, ClMatrix};
 use matrix::cl_matrix::ClMatrixMode;
 
 use super::graph::Node;
-use super::var_store::{VarIndex, VarStore};
+use super::var_store::VarStore;
 
 pub trait Operation {
     fn forward(&mut self, &matrix::Context, &mut VarStore, &mut Node);
-    fn backward(&mut self, &matrix::Context, &mut VarStore, &mut Node, VarIndex);
+    fn backward(&mut self, &matrix::Context, &mut VarStore, &mut Node);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -36,14 +36,14 @@ impl Operation for MatMul {
         n.out_events.push(event);
     }
 
-    fn backward(&mut self, ctx: &matrix::Context, v: &mut VarStore, n: &mut Node, grad: VarIndex) {
+    fn backward(&mut self, ctx: &matrix::Context, v: &mut VarStore, n: &mut Node) {
         // Derivative with respect to first input
         let (a_event, b_event) = {
             let a = v.get(n.inputs[0]);
             let b = v.get(n.inputs[1]);
-            let a_d = v.get(n.gradients[0]);
-            let b_d = v.get(n.gradients[1]);
-            let g = v.get(grad);
+            let a_d = v.get(n.in_grad[0]);
+            let b_d = v.get(n.in_grad[1]);
+            let g = v.get(n.out_grad[0].gradient());
 
             // a_d = g*b_t
             b.transpose(ctx, &self.b_t);
