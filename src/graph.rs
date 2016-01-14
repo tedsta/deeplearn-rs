@@ -30,9 +30,9 @@ impl OutGrad {
     fn maybe_sum(&self, ctx: &matrix::Context, var_store: &mut VarStore) {
         if self.gradients.len() > 0 {
             if let Some(sum) = self.gradient {
-                var_store.get(self.gradients[0]).copy_to(ctx, var_store.get(sum));
+                var_store.get(self.gradients[0]).copy_to(ctx, &mut var_store.get_mut(sum));
                 for grad in &self.gradients[1..] {
-                    var_store.get(sum).add(ctx, var_store.get(*grad), var_store.get(sum));
+                    var_store.get(sum).add(ctx, &var_store.get(*grad), &mut var_store.get_mut(sum));
                 }
             }
         }
@@ -64,7 +64,6 @@ pub struct Node {
     pub outputs: Vec<VarIndex>,
     pub in_grad: Vec<VarIndex>, // gradients on inputs
     pub out_grad: Vec<OutGrad>, // gradients on outputs
-    pub out_events: Vec<matrix::cl_matrix::Event>,
 }
 
 pub struct Graph {
@@ -126,8 +125,7 @@ impl Graph {
         self.nodes.push(Node { inputs: inputs,
                                outputs: outputs,
                                in_grad: in_grad,
-                               out_grad: vec![OutGrad::new(); out_shapes.len()],
-                               out_events: vec![] });
+                               out_grad: vec![OutGrad::new(); out_shapes.len()] });
         // Add the corresponding node op
         self.node_ops.push(op);
         node_index
@@ -151,11 +149,6 @@ impl Graph {
     }
 
     pub fn run(&mut self, ctx: &matrix::Context) {
-        // Clear all the out_events
-        for node in &mut self.nodes {
-            node.out_events.clear();
-        }
-
         // Forward pass
         //
         // NOTE: We just execute the nodes in order. We can do this because of the way the graph is
@@ -219,10 +212,7 @@ fn it_works() {
 
     // Run the network
     graph.run(&ctx);
-    let out = {
-        let ref out_event = node.get(&graph).out_events[0];
-        out_event.get(&ctx, node.get(&graph).outputs[0].get(&graph))
-    };
+    let out = node.get(&graph).outputs[0].get(&graph).get(&ctx);
     println!("{:?}", out);
     assert!(false);
 }

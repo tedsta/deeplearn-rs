@@ -27,35 +27,27 @@ impl MatMul {
 
 impl Operation for MatMul {
     fn forward(&mut self, ctx: &matrix::Context, v: &mut VarStore, n: &mut Node) {
-        let event = {
-            let a = v.get(n.inputs[0]);
-            let b = v.get(n.inputs[1]);
-            let c = v.get(n.outputs[0]);
-            a.cross(ctx, b, c) // c = a*b
-        };
-        n.out_events.push(event);
+        let a = &v.get(n.inputs[0]);
+        let b = &v.get(n.inputs[1]);
+        let c = &mut v.get_mut(n.outputs[0]);
+        a.cross(ctx, b, c); // c = a*b
     }
 
     fn backward(&mut self, ctx: &matrix::Context, v: &mut VarStore, n: &mut Node) {
+        let a = &v.get(n.inputs[0]);
+        let b = &v.get(n.inputs[1]);
+        let a_d = &mut v.get_mut(n.in_grad[0]);
+        let b_d = &mut v.get_mut(n.in_grad[1]);
+        let g = &v.get(n.out_grad[0].gradient());
+        
         // Derivative with respect to first input
-        let (a_event, b_event) = {
-            let a = v.get(n.inputs[0]);
-            let b = v.get(n.inputs[1]);
-            let a_d = v.get(n.in_grad[0]);
-            let b_d = v.get(n.in_grad[1]);
-            let g = v.get(n.out_grad[0].gradient());
+        // a_d = g*b_t
+        b.transpose(ctx, &mut self.b_t);
+        g.cross(ctx, &self.b_t, a_d);
 
-            // a_d = g*b_t
-            b.transpose(ctx, &self.b_t);
-            let a_event = g.cross(ctx, &self.b_t, a_d);
-
-            // b_d = a_t*g
-            a.transpose(ctx, &self.a_t);
-            let b_event = self.a_t.cross(ctx, g, b_d);
-
-            (a_event, b_event)
-        };
-        n.out_events.push(a_event);
-        n.out_events.push(b_event);
+        // Derivative with respect to second input
+        // b_d = a_t*g
+        a.transpose(ctx, &mut self.a_t);
+        self.a_t.cross(ctx, g, b_d);
     }
 }
