@@ -137,6 +137,10 @@ impl Graph {
         v
     }
 
+    pub fn get_input_gradient<'a>(&'a self, v: VarIndex) -> Option<VarIndex> {
+        self.in_var_grad.get(&v).and_then(|x| x.try_gradient())
+    }
+
     pub fn add_gradient(&mut self, ctx: &matrix::Context, n: NodeIndex, out_index: usize) -> VarIndex {
         let (rows, cols) = {
             let grad = n.get(self).outputs[out_index];
@@ -202,7 +206,7 @@ fn it_works() {
     let node_g = graph.add_gradient(&ctx, node, 0);
 
     // Send some input data
-    let a_cpu = matrix::Matrix::from_vec(1, 2, vec![1.0, 1.0]);
+    let a_cpu = matrix::Matrix::from_vec(1, 2, vec![1.4, 0.3]);
     let wa_cpu = matrix::Matrix::from_vec(2, 3, vec![0.5, 0.3, 0.2,
                                                      0.6, 0.7, 0.7]);
     let node_g_cpu = matrix::Matrix::from_vec(1, 3, vec![1.0, -1.0, 0.5]);
@@ -213,6 +217,10 @@ fn it_works() {
     // Run the network
     graph.run(&ctx);
     let out = node.get(&graph).outputs[0].get(&graph).get(&ctx);
+    let wa_g = graph.get_input_gradient(wa).unwrap().get(&graph).get(&ctx);
     println!("{:?}", out);
-    assert!(false);
+    println!("{:?}", wa_g);
+    assert!(out.buffer() == &[0.88, 0.63, 0.49]);
+    assert!(wa_g.buffer() == &[1.4, -1.4, 0.7,
+                               0.3, -0.3, 0.15]);
 }
