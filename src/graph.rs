@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use matrix::{self, ClMatrix, ClMatrixMode};
 
-use super::operation::Operation;
+use super::op::Operation;
 use super::var_store::{VarIndex, VarStore};
 
 #[derive(Clone)]
@@ -191,7 +191,7 @@ impl NodeIndex {
 
 #[test]
 fn it_works() {
-    use super::operation::MatMul;
+    use super::op::MatMul;
     
     let ctx = matrix::Context::new();
 
@@ -217,10 +217,10 @@ fn it_works() {
     // Run the network
     graph.run(&ctx);
     let out = node.get(&graph).outputs[0].get(&graph).get(&ctx);
-    let wa_g = graph.get_input_gradient(wa).unwrap().get(&graph).get(&ctx);
-    println!("{:?}", out);
-    println!("{:?}", wa_g);
+    let wa_d = graph.get_input_gradient(wa).unwrap().get(&graph).get(&ctx);
+    println!("out = {:?}", out);
+    println!("wa_d = {:?}", wa_d);
     assert!(out.buffer() == &[0.88, 0.63, 0.49]);
-    assert!(wa_g.buffer() == &[1.4, -1.4, 0.7,
+    assert!(wa_d.buffer() == &[1.4, -1.4, 0.7,
                                0.3, -0.3, 0.15]);
 }
