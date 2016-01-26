@@ -54,15 +54,11 @@ impl Operation for MatMul {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct Relu {
-    relu_d: ClMatrix<f32>,
-}
+pub struct Relu;
 
 impl Relu {
-    pub fn new(ctx: &matrix::Context, shape: (u64, u64)) -> Self {
-        Relu {
-            relu_d: ClMatrix::new(ctx, shape.0 as usize, shape.1 as usize, ClMatrixMode::Mut),
-        }
+    pub fn new() -> Self {
+        Relu
     }
 }
 
@@ -77,22 +73,18 @@ impl Operation for Relu {
         let a = &v.get(n.inputs[0]);
         let a_d = &v.get(n.in_grad[0]);
         let g = &v.get(n.out_grad[0].gradient());
-        a.dmax(ctx, 0.0, &self.relu_d);
-        g.multiply(ctx, &self.relu_d, a_d);
+        a.dmax(ctx, 0.0, a_d);
+        g.multiply(ctx, a_d, a_d);
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct Mse {
-    mse_d: ClMatrix<f32>,
-}
+pub struct Mse;
 
 impl Mse {
-    pub fn new(ctx: &matrix::Context, shape: (u64, u64)) -> Self {
-        Mse {
-            mse_d: ClMatrix::new(ctx, shape.0 as usize, shape.1 as usize, ClMatrixMode::Mut),
-        }
+    pub fn new() -> Self {
+        Mse
     }
 }
 
@@ -109,7 +101,7 @@ impl Operation for Mse {
         let h_d = &v.get(n.in_grad[0]);
         let y = &v.get(n.inputs[1]); // training output
         let g = &v.get(n.out_grad[0].gradient());
-        h.dmse(ctx, y, &self.mse_d); // h_d = dmse(h, y)
-        g.multiply(ctx, &self.mse_d, h_d); // h_d = g*h_d
+        h.dmse(ctx, y, h_d); // h_d = dmse(h, y)
+        g.multiply(ctx, h_d, h_d); // h_d = g*h_d
     }
 }

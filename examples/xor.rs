@@ -20,7 +20,7 @@ fn main() {
                                     &[(5, 3)]);
     let l1_mat_mul_out = l1_mat_mul.get(&graph).outputs[0];
     let l1_relu = graph.add_node(&ctx,
-                                 Box::new(Relu::new(&ctx, (5, 3))),
+                                 Box::new(Relu::new()),
                                  vec![l1_mat_mul_out],
                                  &[(5, 3)]);
     let l1_relu_out = l1_relu.get(&graph).outputs[0];
@@ -32,14 +32,14 @@ fn main() {
                                     &[(5, 1)]);
     let l2_mat_mul_out = l2_mat_mul.get(&graph).outputs[0];
     let l2_relu = graph.add_node(&ctx,
-                                 Box::new(Relu::new(&ctx, (5, 1))),
+                                 Box::new(Relu::new()),
                                  vec![l2_mat_mul_out],
                                  &[(5, 1)]);
     let l2_relu_out = l2_relu.get(&graph).outputs[0];
     // Loss
     let train_out = graph.add_variable(&ctx, (5, 1));
     let loss = graph.add_node(&ctx,
-                              Box::new(Mse::new(&ctx, (5, 1))),
+                              Box::new(Mse::new()),
                               vec![l2_relu_out, train_out],
                               &[(1, 1)]);
     let loss_out = loss.get(&graph).outputs[0];
