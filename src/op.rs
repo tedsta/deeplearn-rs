@@ -54,6 +54,37 @@ impl Operation for MatMul {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+pub struct Add {
+    axis: i32,
+}
+
+impl Add {
+    pub fn new(axis: i32) -> Self {
+        Add {
+            axis: axis,
+        }
+    }
+}
+
+impl Operation for Add {
+    fn forward(&mut self, ctx: &matrix::Context, v: &mut VarStore, n: &mut Node) {
+        let a = &v.get(n.inputs[0]);
+        let b = &v.get(n.inputs[1]);
+        let c = &v.get(n.outputs[0]);
+        a.add(ctx, self.axis, b, c); // c = a+b
+    }
+
+    fn backward(&mut self, ctx: &matrix::Context, v: &mut VarStore, n: &mut Node) {
+        let a_d = &v.get(n.in_grad[0]);
+        let b_d = &v.get(n.in_grad[1]);
+        let g = &v.get(n.out_grad[0].gradient());
+        g.copy_to(ctx, a_d);
+        g.copy_to(ctx, b_d);
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub struct Relu;
 
 impl Relu {

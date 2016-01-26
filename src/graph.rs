@@ -32,7 +32,7 @@ impl OutGrad {
             if let Some(sum) = self.gradient {
                 var_store.get(self.gradients[0]).copy_to(ctx, &mut var_store.get_mut(sum));
                 for grad in &self.gradients[1..] {
-                    var_store.get(sum).add(ctx, &var_store.get(*grad), &mut var_store.get_mut(sum));
+                    var_store.get(sum).add(ctx, 0, &var_store.get(*grad), &mut var_store.get_mut(sum));
                 }
             }
         }
