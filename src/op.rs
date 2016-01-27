@@ -105,7 +105,7 @@ impl Operation for Relu {
         let a_d = &v.get(n.in_grad[0]);
         let g = &v.get(n.out_grad[0].gradient());
         a.dmax(ctx, 0.0, a_d);
-        g.multiply(ctx, a_d, a_d);
+        g.multiply(ctx, -1, a_d, a_d);
     }
 }
 
@@ -133,6 +133,6 @@ impl Operation for Mse {
         let y = &v.get(n.inputs[1]); // training output
         let g = &v.get(n.out_grad[0].gradient());
         h.dmse(ctx, y, h_d); // h_d = dmse(h, y)
-        g.multiply(ctx, h_d, h_d); // h_d = g*h_d
+        h_d.multiply(ctx, 0, g, h_d); // h_d = g*h_d
     }
 }
