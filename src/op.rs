@@ -79,7 +79,7 @@ impl Operation for Add {
         let b_d = &v.get(n.in_grad[1]);
         let g = &v.get(n.out_grad[0].gradient());
         g.copy_to(ctx, a_d);
-        g.copy_to(ctx, b_d);
+        g.sum(ctx, self.axis as usize, b_d);
     }
 }
 
