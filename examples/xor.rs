@@ -37,7 +37,7 @@ fn main() {
                                     vec![l1_relu_out, l2_w],
                                     &[(5, 1)]);
     let l2_mat_mul_out = l2_mat_mul.get(&graph).outputs[0];
-    let l2_b = graph.add_variable(&ctx, (5, 1));
+    let l2_b = graph.add_variable(&ctx, (1, 1));
     let l2_fc = graph.add_node(&ctx,
                                Box::new(Add::new(0)),
                                vec![l2_mat_mul_out, l2_b],
@@ -58,28 +58,39 @@ fn main() {
     let loss_d = graph.add_gradient(&ctx, loss, 0);
 
     // Send some input data
-    let a_cpu = matrix::Matrix::from_vec(5, 2, vec![1.0, 0.0,
-                                                    0.0, 1.0,
-                                                    0.0, 0.0,
-                                                    1.0, 1.0,
-                                                    0.5, 0.0]);
-    let train_out_cpu = matrix::Matrix::from_vec(5, 1, vec![1.0, 1.0, 0.0, 0.0, 0.5]);
+    let a1_cpu = matrix::Matrix::from_vec(5, 2, vec![1.0, 0.0,
+                                                     0.0, 1.0,
+                                                     1.0, 0.0,
+                                                     0.0, 1.0,
+                                                     0.5, 0.0]);
+    let a2_cpu = matrix::Matrix::from_vec(5, 2, vec![1.0, 1.0,
+                                                     1.0, 1.0,
+                                                     0.0, 0.0,
+                                                     0.0, 0.0,
+                                                     0.5, 0.5]);
+    let train_out1_cpu = matrix::Matrix::from_vec(5, 1, vec![1.0, 1.0, 1.0, 1.0, 0.5]);
+    let train_out2_cpu = matrix::Matrix::from_vec(5, 1, vec![0.0, 0.0, 0.0, 0.0, 0.0]);
     let l1_w_cpu = matrix::Matrix::from_vec(2, 3, vec![1.0, 0.3, 0.0,
                                                        0.0, 0.8, 0.6]);
     let l1_b_cpu = matrix::Matrix::from_vec(1, 3, vec![0.3, -0.5, 0.1]);
     let l2_w_cpu = matrix::Matrix::from_vec(3, 1, vec![1.0, 0.5, 1.0]);
-    let l2_b_cpu = matrix::Matrix::from_vec(1, 1, vec![0.0]);
+    let l2_b_cpu = matrix::Matrix::from_vec(1, 1, vec![0.2]);
     let loss_d_cpu = matrix::Matrix::from_vec(1, 1, vec![-0.1]);
-    a.get(&graph).set(&ctx, &a_cpu);
-    train_out.get(&graph).set(&ctx, &train_out_cpu);
     l1_w.get(&graph).set(&ctx, &l1_w_cpu);
-    //l1_b.get(&graph).set(&ctx, &l1_b_cpu);
+    l1_b.get(&graph).set(&ctx, &l1_b_cpu);
     l2_w.get(&graph).set(&ctx, &l2_w_cpu);
-    //l2_b.get(&graph).set(&ctx, &l2_b_cpu);
+    l2_b.get(&graph).set(&ctx, &l2_b_cpu);
     loss_d.get(&graph).set(&ctx, &loss_d_cpu);
 
     // Run/Train the network
     for epoch in 0..1000 {
+        if epoch % 2 == 0 {
+            a.get(&graph).set(&ctx, &a1_cpu);
+            train_out.get(&graph).set(&ctx, &train_out1_cpu);
+        } else {
+            a.get(&graph).set(&ctx, &a2_cpu);
+            train_out.get(&graph).set(&ctx, &train_out2_cpu);
+        }
         graph.run(&ctx);
         let out = l2_relu_out.get(&graph).get(&ctx);
         let out_d = l2_relu.get(&graph)
@@ -92,14 +103,16 @@ fn main() {
         let l2_w_d = graph.get_input_gradient(l1_w).unwrap().get(&graph);
         l1_w.get(&graph).add(&ctx, -1, &*l1_w_d, &*l1_w.get(&graph));
         l2_w.get(&graph).add(&ctx, -1, &*l2_w_d, &*l2_w.get(&graph));
-        if epoch % 100 == 0 {
+        if epoch % 100 == 0 || epoch % 100 == 1 {
             println!("===================");
             println!("Epoch: {}", epoch);
             println!("out = {:?}", out);
             println!("out_d = {:?}", out_d);
             println!("loss = {:?}", l);
             println!("l1_w = {:?}", l1_w.get(&graph).get(&ctx));
+            println!("l1_b = {:?}", l1_b.get(&graph).get(&ctx));
             println!("l2_w = {:?}", l2_w.get(&graph).get(&ctx));
+            println!("l2_b = {:?}", l2_b.get(&graph).get(&ctx));
         }
     }
 }
