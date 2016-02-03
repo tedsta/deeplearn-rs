@@ -86,9 +86,9 @@ impl Graph {
         }
     }
 
-    pub fn add_node(&mut self,
+    pub fn add_node<T: Operation>(&mut self,
                     ctx: &matrix::Context,
-                    op: Box<Operation>,
+                    op: T,
                     inputs: Vec<VarIndex>,
                     out_shapes: &[(u64, u64)])
                     -> NodeIndex {
@@ -127,7 +127,7 @@ impl Graph {
                                in_grad: in_grad,
                                out_grad: vec![OutGrad::new(); out_shapes.len()] });
         // Add the corresponding node op
-        self.node_ops.push(op);
+        self.node_ops.push(Box::new(op));
         node_index
     }
 
@@ -200,7 +200,7 @@ fn it_works() {
     let a = graph.add_variable(&ctx, (1, 2));
     let wa = graph.add_variable(&ctx, (2, 3));
     let node = graph.add_node(&ctx,
-                              Box::new(MatMul::new(&ctx, (1, 2), (2, 3))),
+                              MatMul::new(&ctx, (1, 2), (2, 3)),
                               vec![a, wa],
                               &[(1, 3)]);
     let node_g = graph.add_gradient(&ctx, node, 0);

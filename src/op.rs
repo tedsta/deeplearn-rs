@@ -4,7 +4,7 @@ use matrix::cl_matrix::ClMatrixMode;
 use super::graph::Node;
 use super::var_store::VarStore;
 
-pub trait Operation {
+pub trait Operation : 'static {
     fn forward(&mut self, &matrix::Context, &mut VarStore, &mut Node);
     fn backward(&mut self, &matrix::Context, &mut VarStore, &mut Node);
 }
