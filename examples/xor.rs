@@ -93,19 +93,19 @@ fn main() {
                                              0.0, 1.0,
                                              1.0, 0.0,
                                              0.0, 1.0,
-                                             0.5, 0.0]);
+                                             0.0, 1.0]);
     let a2_cpu = Matrix::from_vec(5, 2, vec![1.0, 1.0,
                                              1.0, 1.0,
                                              0.0, 0.0,
                                              0.0, 0.0,
-                                             0.5, 0.5]);
-    let train_out1_cpu = Matrix::from_vec(5, 1, vec![1.0, 1.0, 1.0, 1.0, 0.5]);
-    let train_out2_cpu = Matrix::from_vec(5, 1, vec![0.0, 0.0, 0.0, 0.0, 0.0]);
-    let l1_w_cpu = Matrix::from_vec(2, 3, vec![1.0, 0.3, 0.0,
-                                               0.0, 0.8, 0.6]);
-    let l1_b_cpu = Matrix::from_vec(1, 3, vec![0.3, -0.5, 0.1]);
-    let l2_w_cpu = Matrix::from_vec(3, 1, vec![1.0, 0.5, 1.0]);
-    let l2_b_cpu = Matrix::from_vec(1, 1, vec![0.2]);
+                                             1.0, 1.0]);
+    let train_out1_cpu = Matrix::from_vec(5, 1, vec![1.0, 1.0, 1.0, 1.0, 1.0]);
+    let train_out2_cpu = Matrix::from_vec(5, 1, vec![0.1, 0.1, 0.1, 0.1, 0.1]);
+    let l1_w_cpu = Matrix::from_vec(2, 3, vec![1.0, 1.0, 0.0,
+                                               0.0, 1.0, 1.0]);
+    let l1_b_cpu = Matrix::from_vec(1, 3, vec![0.0, -1.5, 0.0]);
+    let l2_w_cpu = Matrix::from_vec(3, 1, vec![1.0, -2.0, 1.0]);
+    let l2_b_cpu = Matrix::from_vec(1, 1, vec![0.5]);
     // We apply a gradient of -0.1 to the loss function
     let loss_d_cpu = Matrix::from_vec(1, 1, vec![-0.1]);
 
