@@ -9,7 +9,7 @@ Right now it is the bare minimum required to manually build and train simple net
 ### Road map
 
 - Allow 3 and 4 dimensional arrays. Currently only 2D arrays are allowed.
-- Allow other datatypes other than `f32` and implement casting between the primitive numeric types.
+- Allow datatypes other than `f32` and implement casting between arrays of primitive numeric types.
 - Implement some automatic trainers such as SGD and Ada Grad.
 - Simplify layer creation.
     - `Operations` should be able to infer their output shapes.
