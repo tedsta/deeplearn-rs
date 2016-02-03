@@ -2,11 +2,11 @@
 
 Deep learning in Rust! This is my first shot at this. It's mostly just a proof of concept right now. The API will change.
 
-## Status
+### Status
 
 Right now it is the bare minimum required to manually build and train simple networks that use matrix multiplication, addition, and ReLU.
 
-## Road map
+### Road map
 
 - Allow 3 and 4 dimensional arrays. Currently only 2D arrays are allowed.
 - Allow other datatypes other than `f32` and implement casting between the primitive numeric types.
@@ -16,7 +16,7 @@ Right now it is the bare minimum required to manually build and train simple net
     - Redo API for array broadcasting
     - Builder pattern for complex layers with optional settings?
 
-## Example
+### Example
 
 Here is an example of a simple fuzzy xor network.
 
@@ -175,6 +175,6 @@ fn main() {
 }
 ```
 
-# License
+### License
 
 MIT
