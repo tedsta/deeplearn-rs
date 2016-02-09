@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use matrix::{self, ClMatrix, ClMatrixMode};
+use rand;
 
+use super::init::Initializer;
 use super::op::Operation;
 use super::var_store::{VarIndex, VarStore};
 
@@ -73,6 +75,7 @@ pub struct Graph {
     out_var_map: HashMap<VarIndex, (NodeIndex, usize)>, // Maps output variable to it's node and index within node
     // Gradients on variables that are inputs to the graph - they have no corresponding node
     in_var_grad: HashMap<VarIndex, OutGrad>,
+    rng: rand::ThreadRng,
 }
 
 impl Graph {
@@ -83,6 +86,7 @@ impl Graph {
             var_store: VarStore::new(),
             out_var_map: HashMap::new(),
             in_var_grad: HashMap::new(),
+            rng: rand::thread_rng(),
         }
     }
 
@@ -90,14 +94,14 @@ impl Graph {
                     ctx: &matrix::Context,
                     op: T,
                     inputs: Vec<VarIndex>,
-                    out_shapes: &[(u64, u64)])
+                    out_shapes: &[(usize, usize)])
                     -> NodeIndex {
         let node_index = NodeIndex(self.nodes.len());
 
         // Create output variables
         let mut outputs = vec![];
         for (i, &(rows, cols)) in out_shapes.iter().enumerate() {
-            let var_index = self.var_store.add(ClMatrix::new(ctx, rows as usize, cols as usize, ClMatrixMode::Mut));
+            let var_index = self.var_store.add(ClMatrix::new(ctx, rows, cols, ClMatrixMode::Mut));
             outputs.push(var_index);
             self.out_var_map.insert(var_index, (node_index, i));
         }
@@ -131,8 +135,12 @@ impl Graph {
         node_index
     }
 
-    pub fn add_variable(&mut self, ctx: &matrix::Context, shape: (u64, u64)) -> VarIndex {
-        let v = self.var_store.add(ClMatrix::new(ctx, shape.0 as usize, shape.1 as usize, ClMatrixMode::Mut));
+    pub fn add_variable<I: Initializer>(&mut self,
+                                        ctx: &matrix::Context,
+                                        shape: (usize, usize),
+                                        init: I) -> VarIndex {
+        let a = init.init(&mut self.rng, vec![shape.0, shape.1]);
+        let v = self.var_store.add(ClMatrix::from_matrix(ctx, &a, ClMatrixMode::Mut));
         self.in_var_grad.insert(v, OutGrad::new());
         v
     }
@@ -197,8 +205,9 @@ fn it_works() {
 
     // Setup the graph
     let mut graph = Graph::new();
-    let a = graph.add_variable(&ctx, (1, 2));
-    let wa = graph.add_variable(&ctx, (2, 3));
+    let a = graph.add_variable(&ctx, (1, 2), vec![1.4, 0.3]);
+    let wa = graph.add_variable(&ctx, (2, 3), vec![0.5, 0.3, 0.2,
+                                                   0.6, 0.7, 0.7]);
     let node = graph.add_node(&ctx,
                               MatMul::new(&ctx, (1, 2), (2, 3)),
                               vec![a, wa],
@@ -206,12 +215,7 @@ fn it_works() {
     let node_g = graph.add_gradient(&ctx, node, 0);
 
     // Send some input data
-    let a_cpu = matrix::Matrix::from_vec(1, 2, vec![1.4, 0.3]);
-    let wa_cpu = matrix::Matrix::from_vec(2, 3, vec![0.5, 0.3, 0.2,
-                                                     0.6, 0.7, 0.7]);
     let node_g_cpu = matrix::Matrix::from_vec(1, 3, vec![1.0, -1.0, 0.5]);
-    a.get(&graph).set(&ctx, &a_cpu);
-    wa.get(&graph).set(&ctx, &wa_cpu);
     node_g.get(&graph).set(&ctx, &node_g_cpu);
 
     // Run the network

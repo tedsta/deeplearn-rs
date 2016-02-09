@@ -5,3 +5,6 @@ authors = ["Theodore DeRego <tderego94@gmail.com>"]
 
 [dependencies.matrix]
 git = "https://github.com/tedsta/matrix-rs"
+
+[dependencies]
+rand = "*"

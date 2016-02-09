@@ -17,10 +17,10 @@ pub struct MatMul {
 }
 
 impl MatMul {
-    pub fn new(ctx: &matrix::Context, a_shape: (u64, u64), b_shape: (u64, u64)) -> Self {
+    pub fn new(ctx: &matrix::Context, a_shape: (usize, usize), b_shape: (usize, usize)) -> Self {
         MatMul {
-            a_t: ClMatrix::new(ctx, a_shape.1 as usize, a_shape.0 as usize, ClMatrixMode::Mut),
-            b_t: ClMatrix::new(ctx, b_shape.1 as usize, b_shape.0 as usize, ClMatrixMode::Mut),
+            a_t: ClMatrix::new(ctx, a_shape.1, a_shape.0, ClMatrixMode::Mut),
+            b_t: ClMatrix::new(ctx, b_shape.1, b_shape.0, ClMatrixMode::Mut),
         }
     }
 }

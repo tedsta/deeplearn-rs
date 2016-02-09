@@ -3,6 +3,7 @@ extern crate matrix;
 
 use deeplearn::Graph;
 use deeplearn::op::{Add, MatMul, Mse, Relu};
+use deeplearn::init;
 use matrix::Matrix;
 
 fn main() {
@@ -16,9 +17,10 @@ fn main() {
     // Layer 1
 
     // Input to xor gate. 5 batches of 2 inputs each.
-    let a = graph.add_variable(&ctx, (5, 2));
+    let a = graph.add_variable(&ctx, (5, 2), init::Normal(0.5, 0.1));
     // Weights for layer 1: [2 inputs x 3 nodes]
-    let l1_w = graph.add_variable(&ctx, (2, 3));
+    let l1_w = graph.add_variable(&ctx, (2, 3), vec![1.0, 1.0, 0.0,
+                                                     0.0, 1.0, 1.0]);
     // Use matrix multiplication to do a fully connected layer
     let l1_mat_mul = graph.add_node(&ctx,
                                     MatMul::new(&ctx, (5, 2), (2, 3)),
@@ -27,7 +29,7 @@ fn main() {
     // Grab VarIndex for l1_mat_mul's output
     let l1_mat_mul_out = l1_mat_mul.get(&graph).outputs[0]; 
     // 3 biases; one for each node in layer 1
-    let l1_b = graph.add_variable(&ctx, (1, 3));
+    let l1_b = graph.add_variable(&ctx, (1, 3), vec![0.0, -1.5, 0.0]);
     // Here we add the biases to the matrix multiplication output
     let l1_biased = graph.add_node(&ctx,
                                Add::new(0),
@@ -46,7 +48,7 @@ fn main() {
     // Layer 2
 
     // Weights for layer 2: [3 inputs x 1 nodes]
-    let l2_w = graph.add_variable(&ctx, (3, 1));
+    let l2_w = graph.add_variable(&ctx, (3, 1), vec![1.0, -2.0, 1.0]);
     // Fully connected layer 2. Use layer 1's output as layer 2's input
     let l2_mat_mul = graph.add_node(&ctx,
                                     MatMul::new(&ctx, (5, 3), (3, 1)),
@@ -55,7 +57,7 @@ fn main() {
     // Grab VarIndex for l2_mat_mul's output
     let l2_mat_mul_out = l2_mat_mul.get(&graph).outputs[0];
     // 1 bias for 1 output node
-    let l2_b = graph.add_variable(&ctx, (1, 1));
+    let l2_b = graph.add_variable(&ctx, (1, 1), vec![0.5]);
     // Here we add the bias to the matrix multiplication output
     let l2_biased = graph.add_node(&ctx,
                                Add::new(0),
@@ -75,7 +77,7 @@ fn main() {
     // Loss
 
     // Add a variable for the training outputs: [5 batches x 1 output]
-    let train_out = graph.add_variable(&ctx, (5, 1));
+    let train_out = graph.add_variable(&ctx, (5, 1), init::Normal(0.1, 0.2));
     // Use mean squared error loss function
     let loss = graph.add_node(&ctx,
                               Mse::new(),
@@ -101,19 +103,19 @@ fn main() {
                                              1.0, 1.0]);
     let train_out1_cpu = Matrix::from_vec(5, 1, vec![1.0, 1.0, 1.0, 1.0, 1.0]);
     let train_out2_cpu = Matrix::from_vec(5, 1, vec![0.1, 0.1, 0.1, 0.1, 0.1]);
-    let l1_w_cpu = Matrix::from_vec(2, 3, vec![1.0, 1.0, 0.0,
+    /*let l1_w_cpu = Matrix::from_vec(2, 3, vec![1.0, 1.0, 0.0,
                                                0.0, 1.0, 1.0]);
     let l1_b_cpu = Matrix::from_vec(1, 3, vec![0.0, -1.5, 0.0]);
     let l2_w_cpu = Matrix::from_vec(3, 1, vec![1.0, -2.0, 1.0]);
-    let l2_b_cpu = Matrix::from_vec(1, 1, vec![0.5]);
+    let l2_b_cpu = Matrix::from_vec(1, 1, vec![0.5]);*/
     // We apply a gradient of -0.1 to the loss function
     let loss_d_cpu = Matrix::from_vec(1, 1, vec![-0.1]);
 
     // Upload all the data to the gpu
-    l1_w.get(&graph).set(&ctx, &l1_w_cpu);
+    /*l1_w.get(&graph).set(&ctx, &l1_w_cpu);
     l1_b.get(&graph).set(&ctx, &l1_b_cpu);
     l2_w.get(&graph).set(&ctx, &l2_w_cpu);
-    l2_b.get(&graph).set(&ctx, &l2_b_cpu);
+    l2_b.get(&graph).set(&ctx, &l2_b_cpu);*/
     loss_d.get(&graph).set(&ctx, &loss_d_cpu);
 
     /////////////////////////
