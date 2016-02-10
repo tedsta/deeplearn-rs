@@ -4,7 +4,7 @@ Deep learning in Rust! This is my first shot at this. It's mostly just a proof o
 
 ### Status
 
-Right now it is the bare minimum required to manually build and train simple networks that use matrix multiplication, addition, and ReLU.
+Right now it is the bare minimum required to manually build and train simple networks that use matrix multiplication, addition, ReLU, and MSE loss. It's enough to train a primitive MNIST classifier, though. Check out the examples.
 
 ### Road map
 
