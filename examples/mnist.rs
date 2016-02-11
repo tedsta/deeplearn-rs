@@ -19,8 +19,8 @@ use matrix::Matrix;
 
 fn main() {
     println!("Reading training labels...");
-    let train_labels = read_mnist_labels("data/mnist/train-labels-idx1-ubyte");
-    let train_labels: Vec<Matrix<f32>> = train_labels.unwrap().into_iter().map(|x| one_hot(x, 10)).collect();
+    let train_labels = read_mnist_labels("data/mnist/train-labels-idx1-ubyte").unwrap();
+    let train_labels_logits: Vec<Matrix<f32>> = train_labels.iter().cloned().map(|x| one_hot(x, 10)).collect();
     println!("Label count: {}", train_labels.len());
 
     println!("Reading training images...");
@@ -114,11 +114,12 @@ fn main() {
 
     /////////////////////////
     // Run/Train the network
+    let mut correct = 0;
     for epoch in 0..100000 {
         // Upload training data
         let train_sample = epoch%train_images.len();
         input.get(&graph).set(&ctx, &train_images[train_sample]);
-        train_out.get(&graph).set(&ctx, &train_labels[train_sample]);
+        train_out.get(&graph).set(&ctx, &train_labels_logits[train_sample]);
 
         graph.run(&ctx);
         let out = l2_relu_out.get(&graph).get(&ctx);
@@ -136,12 +137,27 @@ fn main() {
         l2_w.get(&graph).add(&ctx, -1, &*l2_w_d, &*l2_w.get(&graph));
         l1_b.get(&graph).add(&ctx, -1, &*l1_b_d, &*l1_b.get(&graph));
         l2_b.get(&graph).add(&ctx, -1, &*l2_b_d, &*l2_b.get(&graph));
-        if epoch % 1000 == 1 {
+
+        let (mut max_index, mut max_value) = (0, out[(0, 0)]);
+        for (i, val) in out.buffer().iter().enumerate() {
+            if *val > max_value {
+                max_index = i;
+                max_value = *val;
+            }
+        }
+
+        if max_index == train_labels[train_sample] as usize {
+            correct += 1;
+        }
+
+        if epoch % 1000 == 999 {
             println!("===================");
             println!("Epoch: {}", epoch);
             println!("out = {:?}", out);
             println!("out_d = {:?}", out_d);
             println!("loss = {:?}", l);
+            println!("Accuracy: {}%", (correct as f32)/(1000 as f32) * 100.0);
+            correct = 0;
         }
     }
 }
