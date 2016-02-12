@@ -1,11 +1,11 @@
 use std::cell::{Ref, RefCell, RefMut};
 
-use matrix::ClMatrix;
+use ga::Tensor;
 
 use super::graph::Graph;
 
 pub struct VarStore {
-    vars: Vec<RefCell<ClMatrix<f32>>>,
+    vars: Vec<RefCell<Tensor<f32>>>,
 }
 
 impl VarStore {
@@ -15,16 +15,16 @@ impl VarStore {
         }
     }
 
-    pub fn add(&mut self, v: ClMatrix<f32>) -> VarIndex {
+    pub fn add(&mut self, v: Tensor<f32>) -> VarIndex {
         self.vars.push(RefCell::new(v));
         VarIndex(self.vars.len()-1)
     }
 
-    pub fn get<'a>(&'a self, v: VarIndex) -> Ref<'a, ClMatrix<f32>> {
+    pub fn get<'a>(&'a self, v: VarIndex) -> Ref<'a, Tensor<f32>> {
         self.vars[v.0].borrow()
     }
 
-    pub fn get_mut<'a>(&'a self, v: VarIndex) -> RefMut<'a, ClMatrix<f32>> {
+    pub fn get_mut<'a>(&'a self, v: VarIndex) -> RefMut<'a, Tensor<f32>> {
         self.vars[v.0].borrow_mut()
     }
 }
@@ -35,11 +35,11 @@ impl VarStore {
 pub struct VarIndex(usize);
 
 impl VarIndex {
-    pub fn get<'a>(&self, g: &'a Graph) -> Ref<'a, ClMatrix<f32>> {
+    pub fn get<'a>(&self, g: &'a Graph) -> Ref<'a, Tensor<f32>> {
         g.var_store.get(*self)
     }
 
-    pub fn get_mut<'a>(&self, g: &'a mut Graph) -> RefMut<'a, ClMatrix<f32>> {
+    pub fn get_mut<'a>(&self, g: &'a mut Graph) -> RefMut<'a, Tensor<f32>> {
         g.var_store.get_mut(*self)
     }
 }

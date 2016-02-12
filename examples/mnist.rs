@@ -1,7 +1,7 @@
 #![feature(zero_one)]
 
 extern crate deeplearn;
-extern crate matrix;
+extern crate gpuarray as ga;
 
 use std::fs::File;
 use std::io::{
@@ -16,13 +16,13 @@ use std::rc::Rc;
 use deeplearn::Graph;
 use deeplearn::op::{Add, MatMul, Mse, Relu};
 use deeplearn::init;
-use matrix::Matrix;
+use ga::Array;
 
 fn main() {
     // Training data
     println!("Reading training labels...");
     let train_labels = read_mnist_labels("data/mnist/train-labels-idx1-ubyte", None).unwrap();
-    let train_labels_logits: Vec<Matrix<f32>> = train_labels.iter().cloned().map(|x| one_hot(x, 10)).collect();
+    let train_labels_logits: Vec<Array<f32>> = train_labels.iter().cloned().map(|x| one_hot(x, 10)).collect();
     println!("Label count: {}", train_labels.len());
 
     println!("Reading training images...");
@@ -31,13 +31,13 @@ fn main() {
     // Validation data
     println!("Reading validation labels...");
     let val_labels = read_mnist_labels("data/mnist/t10k-labels-idx1-ubyte", Some(1000)).unwrap();
-    let val_labels_logits: Vec<Matrix<f32>> = val_labels.iter().cloned().map(|x| one_hot(x, 10)).collect();
+    let val_labels_logits: Vec<Array<f32>> = val_labels.iter().cloned().map(|x| one_hot(x, 10)).collect();
     println!("Label count: {}", train_labels.len());
 
     println!("Reading validation images...");
     let (_, _, val_images) = read_mnist_images("data/mnist/t10k-images-idx3-ubyte", Some(1000)).unwrap();
 
-    let ctx = Rc::new(matrix::Context::new());
+    let ctx = Rc::new(ga::Context::new());
 
     // Setup the graph. It's going to have 2 inputs, 3 hidden nodes in it's 1 hidden layer, and 1
     // output node
@@ -99,7 +99,7 @@ fn main() {
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
     // We apply a gradient of -0.001 to the loss function
-    let loss_d_cpu = Matrix::from_vec(1, 10, vec![-0.001; 10]);
+    let loss_d_cpu = Array::from_vec(vec![1, 10], vec![-0.001; 10]);
     loss_d.get(&graph).set(&ctx, &loss_d_cpu);
 
     /////////////////////////
@@ -113,12 +113,6 @@ fn main() {
 
         graph.run();
         let out = l2_relu_out.get(&graph).get(&ctx);
-        let out_d = l2_relu.get(&graph)
-                           .out_grad[0]
-                           .gradient()
-                           .get(&graph)
-                           .get(&ctx);
-        let l = loss_out.get(&graph).get(&ctx);
         let l1_w_d = graph.get_input_gradient(l1_w).unwrap().get(&graph);
         let l2_w_d = graph.get_input_gradient(l2_w).unwrap().get(&graph);
         let l1_b_d = graph.get_input_gradient(l1_b).unwrap().get(&graph);
@@ -128,7 +122,7 @@ fn main() {
         l1_b.get(&graph).add(&ctx, -1, &*l1_b_d, &*l1_b.get(&graph));
         l2_b.get(&graph).add(&ctx, -1, &*l2_b_d, &*l2_b.get(&graph));
 
-        let (mut max_index, mut max_value) = (0, out[(0, 0)]);
+        let (mut max_index, mut max_value) = (0, out[&[0, 0]]);
         for (i, val) in out.buffer().iter().enumerate() {
             if *val > max_value {
                 max_index = i;
@@ -141,6 +135,12 @@ fn main() {
         }
 
         if epoch % 1000 == 999 {
+            let out_d = l2_relu.get(&graph)
+                               .out_grad[0]
+                               .gradient()
+                               .get(&graph)
+                               .get(&ctx);
+            let l = loss_out.get(&graph).get(&ctx);
             println!("===================");
             println!("Epoch: {}", epoch);
             println!("out = {:?}", out);
@@ -164,14 +164,8 @@ fn main() {
 
         graph.run();
         let out = l2_relu_out.get(&graph).get(&ctx);
-        let out_d = l2_relu.get(&graph)
-                           .out_grad[0]
-                           .gradient()
-                           .get(&graph)
-                           .get(&ctx);
-        let l = loss_out.get(&graph).get(&ctx);
 
-        let (mut max_index, mut max_value) = (0, out[(0, 0)]);
+        let (mut max_index, mut max_value) = (0, out[&[0, 0]]);
         for (i, val) in out.buffer().iter().enumerate() {
             if *val > max_value {
                 max_index = i;
@@ -184,6 +178,12 @@ fn main() {
         }
 
         if epoch % 1000 == 999 {
+            let out_d = l2_relu.get(&graph)
+                               .out_grad[0]
+                               .gradient()
+                               .get(&graph)
+                               .get(&ctx);
+            let l = loss_out.get(&graph).get(&ctx);
             println!("===================");
             println!("Epoch: {}", epoch);
             println!("out = {:?}", out);
@@ -222,7 +222,7 @@ fn read_mnist_labels<P: AsRef<Path>>(path: P, num_samples: Option<usize>) -> io:
     Ok(labels)
 }
 
-fn read_mnist_images<P: AsRef<Path>>(path: P, num_samples: Option<usize>) -> io::Result<(usize, usize, Vec<Matrix<f32>>)> {
+fn read_mnist_images<P: AsRef<Path>>(path: P, num_samples: Option<usize>) -> io::Result<(usize, usize, Vec<Array<f32>>)> {
     use std::io::{Error, ErrorKind};
 
     let ref mut file = BufReader::new(File::open(path).unwrap());
@@ -247,23 +247,23 @@ fn read_mnist_images<P: AsRef<Path>>(path: P, num_samples: Option<usize>) -> io:
         }
         let mut pixel_buf = vec![0u8; rows*columns];
         try!(file.read_exact(pixel_buf.as_mut()));
-        let matrix = Matrix::from_vec(rows, columns,
-                                      pixel_buf.into_iter().map(|x| (x as f32)/255.0).collect());
-        images.push(matrix);
+        let array = Array::from_vec(vec![rows, columns],
+                                    pixel_buf.into_iter().map(|x| (x as f32)/255.0).collect());
+        images.push(array);
     }
 
     Ok((rows, columns, images))
 }
 
-fn one_hot<N, M>(label: N, classes: N) -> Matrix<M>
+fn one_hot<N, M>(label: N, classes: N) -> Array<M>
     where usize: From<N>,
-          M:     matrix::num::Num+Zero+One,
+          M:     ga::num::Num+Zero+One,
 {
     let classes: usize = From::from(classes); // Cast class count to usize
     let label: usize = From::from(label); // Cast label to usize
     let mut buf: Vec<M> = vec![Zero::zero(); classes]; // Create array of zeroes
     buf[label] = One::one(); // Set the one-hot component
-    Matrix::from_vec(1, buf.len(), buf) // Construct the matrix
+    Array::from_vec(vec![1, buf.len()], buf) // Construct the array
 }
 
 fn read_u8<T: Read>(reader: &mut T) -> io::Result<u8> {

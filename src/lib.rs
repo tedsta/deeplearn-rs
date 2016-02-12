@@ -1,4 +1,4 @@
-extern crate matrix;
+extern crate gpuarray as ga;
 extern crate rand;
 
 pub use graph::{Graph, NodeIndex};

@@ -3,8 +3,8 @@ name = "deeplearn"
 version = "0.1.0"
 authors = ["Theodore DeRego <tderego94@gmail.com>"]
 
-[dependencies.matrix]
-git = "https://github.com/tedsta/matrix-rs"
+[dependencies.gpuarray]
+git = "https://github.com/tedsta/gpuarray-rs"
 
 [dependencies]
 rand = "*"
