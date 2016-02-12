@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use matrix::{self, ClMatrix, ClMatrixMode};
 use rand;
@@ -69,6 +70,7 @@ pub struct Node {
 }
 
 pub struct Graph {
+    ctx: Rc<matrix::Context>,
     nodes: Vec<Node>,
     node_ops: Vec<Box<Operation>>,
     pub var_store: VarStore,
@@ -79,8 +81,9 @@ pub struct Graph {
 }
 
 impl Graph {
-    pub fn new() -> Self {
+    pub fn new(ctx: Rc<matrix::Context>,) -> Self {
         Graph {
+            ctx: ctx,
             nodes: vec![],
             node_ops: vec![],
             var_store: VarStore::new(),
@@ -91,7 +94,6 @@ impl Graph {
     }
 
     pub fn add_node<T: Operation>(&mut self,
-                    ctx: &matrix::Context,
                     op: T,
                     inputs: Vec<VarIndex>,
                     out_shapes: &[(usize, usize)])
@@ -101,7 +103,7 @@ impl Graph {
         // Create output variables
         let mut outputs = vec![];
         for (i, &(rows, cols)) in out_shapes.iter().enumerate() {
-            let var_index = self.var_store.add(ClMatrix::new(ctx, rows, cols, ClMatrixMode::Mut));
+            let var_index = self.var_store.add(ClMatrix::new(self.ctx.as_ref(), rows, cols, ClMatrixMode::Mut));
             outputs.push(var_index);
             self.out_var_map.insert(var_index, (node_index, i));
         }
@@ -110,18 +112,18 @@ impl Graph {
         for input in &inputs {
             // Create input gradient variables
             let (rows, cols) = (input.get(self).rows(), input.get(self).columns());
-            let var_index = self.var_store.add(ClMatrix::new(ctx, rows as usize, cols as usize, ClMatrixMode::Mut));
+            let var_index = self.var_store.add(ClMatrix::new(self.ctx.as_ref(), rows as usize, cols as usize, ClMatrixMode::Mut));
             in_grad.push(var_index);
 
             // Set up gradient back flow
             match self.out_var_map.get(input).map(|x| *x) {
                 Some((in_node, out_index)) => {
-                    self.nodes[in_node.0].out_grad[out_index].fork(ctx, &mut self.var_store, var_index);
+                    self.nodes[in_node.0].out_grad[out_index].fork(self.ctx.as_ref(), &mut self.var_store, var_index);
                 },
                 None => {
                     // This input doesn't come from a node's output. It is an input to the graph.
                     self.in_var_grad.get_mut(input).unwrap()
-                        .fork(ctx, &mut self.var_store, var_index);
+                        .fork(self.ctx.as_ref(), &mut self.var_store, var_index);
                 },
             }
         }
@@ -136,11 +138,10 @@ impl Graph {
     }
 
     pub fn add_variable<I: Initializer>(&mut self,
-                                        ctx: &matrix::Context,
                                         shape: (usize, usize),
                                         init: I) -> VarIndex {
         let a = init.init(&mut self.rng, vec![shape.0, shape.1]);
-        let v = self.var_store.add(ClMatrix::from_matrix(ctx, &a, ClMatrixMode::Mut));
+        let v = self.var_store.add(ClMatrix::from_matrix(self.ctx.as_ref(), &a, ClMatrixMode::Mut));
         self.in_var_grad.insert(v, OutGrad::new());
         v
     }
@@ -149,18 +150,18 @@ impl Graph {
         self.in_var_grad.get(&v).and_then(|x| x.try_gradient())
     }
 
-    pub fn add_gradient(&mut self, ctx: &matrix::Context, n: NodeIndex, out_index: usize) -> VarIndex {
+    pub fn add_gradient(&mut self, n: NodeIndex, out_index: usize) -> VarIndex {
         let (rows, cols) = {
             let grad = n.get(self).outputs[out_index];
             let grad = grad.get(self);
             (grad.rows(), grad.columns())
         };
-        let v = self.var_store.add(ClMatrix::new(ctx, rows as usize, cols as usize, ClMatrixMode::Mut));
-        self.nodes[n.0].out_grad[out_index].fork(ctx, &mut self.var_store, v);
+        let v = self.var_store.add(ClMatrix::new(self.ctx.as_ref(), rows as usize, cols as usize, ClMatrixMode::Mut));
+        self.nodes[n.0].out_grad[out_index].fork(self.ctx.as_ref(), &mut self.var_store, v);
         v
     }
 
-    pub fn run(&mut self, ctx: &matrix::Context) {
+    pub fn run(&mut self) {
         // Forward pass
         //
         // NOTE: We just execute the nodes in order. We can do this because of the way the graph is
@@ -168,16 +169,16 @@ impl Graph {
         // any dependencies must already be added before the node can be added. Therefore, we can
         // assert that all dependents come after their dependencies in the `self.nodes` array.
         for (node, op) in self.nodes.iter_mut().zip(&mut self.node_ops) {
-            op.forward(ctx, &mut self.var_store, node);
+            op.forward(self.ctx.as_ref(), &mut self.var_store, node);
         }
 
         // Backward pass
         for (node, op) in self.nodes.iter_mut().rev().zip(self.node_ops.iter_mut().rev()) {
             // Sum the gradients on each output if there are multiple gradients
             for out_grad in &node.out_grad {
-                out_grad.maybe_sum(ctx, &mut self.var_store);
+                out_grad.maybe_sum(self.ctx.as_ref(), &mut self.var_store);
             }
-            op.backward(ctx, &mut self.var_store, node);
+            op.backward(self.ctx.as_ref(), &mut self.var_store, node);
         }
     }
 }
@@ -201,25 +202,24 @@ impl NodeIndex {
 fn it_works() {
     use super::op::MatMul;
     
-    let ctx = matrix::Context::new();
+    let ctx = Rc::new(matrix::Context::new());
 
     // Setup the graph
-    let mut graph = Graph::new();
-    let a = graph.add_variable(&ctx, (1, 2), vec![1.4, 0.3]);
-    let wa = graph.add_variable(&ctx, (2, 3), vec![0.5, 0.3, 0.2,
+    let mut graph = Graph::new(ctx.clone());
+    let a = graph.add_variable((1, 2), vec![1.4, 0.3]);
+    let wa = graph.add_variable((2, 3), vec![0.5, 0.3, 0.2,
                                                    0.6, 0.7, 0.7]);
-    let node = graph.add_node(&ctx,
-                              MatMul::new(&ctx, (1, 2), (2, 3)),
+    let node = graph.add_node(MatMul::new(&ctx, (1, 2), (2, 3)),
                               vec![a, wa],
                               &[(1, 3)]);
-    let node_g = graph.add_gradient(&ctx, node, 0);
+    let node_g = graph.add_gradient(node, 0);
 
     // Send some input data
     let node_g_cpu = matrix::Matrix::from_vec(1, 3, vec![1.0, -1.0, 0.5]);
     node_g.get(&graph).set(&ctx, &node_g_cpu);
 
     // Run the network
-    graph.run(&ctx);
+    graph.run();
     let out = node.get(&graph).outputs[0].get(&graph).get(&ctx);
     let wa_d = graph.get_input_gradient(wa).unwrap().get(&graph).get(&ctx);
     println!("out = {:?}", out);

@@ -11,6 +11,7 @@ use std::io::{
 };
 use std::num::{Zero, One};
 use std::path::Path;
+use std::rc::Rc;
 
 use deeplearn::Graph;
 use deeplearn::op::{Add, MatMul, Mse, Relu};
@@ -36,38 +37,35 @@ fn main() {
     println!("Reading validation images...");
     let (_, _, val_images) = read_mnist_images("data/mnist/t10k-images-idx3-ubyte", Some(1000)).unwrap();
 
-    let ctx = matrix::Context::new();
+    let ctx = Rc::new(matrix::Context::new());
 
     // Setup the graph. It's going to have 2 inputs, 3 hidden nodes in it's 1 hidden layer, and 1
     // output node
-    let mut graph = Graph::new();
+    let mut graph = Graph::new(ctx.clone());
 
     //////////////////////////
     // Layer 1
 
     // Input.  1 batches of rows*columns inputs each.
-    let input = graph.add_variable(&ctx, (1, rows*columns), vec![0.0; rows*columns]);
+    let input = graph.add_variable((1, rows*columns), vec![0.0; rows*columns]);
     // Weights for layer 1: [2 inputs x 3 nodes]
-    let l1_w = graph.add_variable(&ctx, (rows*columns, 1000), init::Normal(0.001, 0.005));
+    let l1_w = graph.add_variable((rows*columns, 1000), init::Normal(0.001, 0.005));
     // Use matrix multiplication to do a fully connected layer
-    let l1_mat_mul = graph.add_node(&ctx,
-                                    MatMul::new(&ctx, (1, rows*columns), (rows*columns, 1000)),
+    let l1_mat_mul = graph.add_node(MatMul::new(&ctx, (1, rows*columns), (rows*columns, 1000)),
                                     vec![input, l1_w],
                                     &[(1, 1000)]); // out shape: [5x2]*[2x3] = [5 batches x 3 outputs]
     // Grab VarIndex for l1_mat_mul's output
     let l1_mat_mul_out = l1_mat_mul.get(&graph).outputs[0]; 
     // 3 biases; one for each node in layer 1
-    let l1_b = graph.add_variable(&ctx, (1, 1000), init::Normal(0.001, 0.005));
+    let l1_b = graph.add_variable((1, 1000), init::Normal(0.001, 0.005));
     // Here we add the biases to the matrix multiplication output
-    let l1_biased = graph.add_node(&ctx,
-                               Add::new(0),
-                               vec![l1_mat_mul_out, l1_b],
-                               &[(1, 1000)]);
+    let l1_biased = graph.add_node(Add::new(0),
+                                   vec![l1_mat_mul_out, l1_b],
+                                   &[(1, 1000)]);
     // Grab VarIndex for l1_biased's output
     let l1_biased_out = l1_biased.get(&graph).outputs[0];
     // Run the biased input*weight sums through an ReLU activation
-    let l1_relu = graph.add_node(&ctx,
-                                 Relu::new(),
+    let l1_relu = graph.add_node(Relu::new(),
                                  vec![l1_biased_out],
                                  &[(1, 1000)]);
     let l1_relu_out = l1_relu.get(&graph).outputs[0];
@@ -76,26 +74,23 @@ fn main() {
     // Layer 2
 
     // Weights for layer 2: [3 inputs x 1 nodes]
-    let l2_w = graph.add_variable(&ctx, (1000, 10), init::Normal(0.001, 0.005));
+    let l2_w = graph.add_variable((1000, 10), init::Normal(0.001, 0.005));
     // Fully connected layer 2. Use layer 1's output as layer 2's input
-    let l2_mat_mul = graph.add_node(&ctx,
-                                    MatMul::new(&ctx, (1, 1000), (1000, 10)),
+    let l2_mat_mul = graph.add_node(MatMul::new(&ctx, (1, 1000), (1000, 10)),
                                     vec![l1_relu_out, l2_w],
                                     &[(1, 10)]); // out shape: [5x3]*[3x1] = [5 batches x 1 output]
     // Grab VarIndex for l2_mat_mul's output
     let l2_mat_mul_out = l2_mat_mul.get(&graph).outputs[0];
     // 1 bias for 1 output node
-    let l2_b = graph.add_variable(&ctx, (1, 10), init::Normal(0.001, 0.005));
+    let l2_b = graph.add_variable((1, 10), init::Normal(0.001, 0.005));
     // Here we add the bias to the matrix multiplication output
-    let l2_biased = graph.add_node(&ctx,
-                               Add::new(0),
-                               vec![l2_mat_mul_out, l2_b],
-                               &[(1, 10)]);
+    let l2_biased = graph.add_node(Add::new(0),
+                                   vec![l2_mat_mul_out, l2_b],
+                                   &[(1, 10)]);
     // Grab VarIndex for l2_biased's output
     let l2_biased_out = l2_biased.get(&graph).outputs[0];
     // Run the biased input*weight sums through an ReLU activation
-    let l2_relu = graph.add_node(&ctx,
-                                 Relu::new(),
+    let l2_relu = graph.add_node(Relu::new(),
                                  vec![l2_biased_out],
                                  &[(1, 10)]);
     // Grab VarIndex for l2_relu's output
@@ -105,16 +100,15 @@ fn main() {
     // Loss
 
     // Add a variable for the training outputs: [5 batches x 1 output]
-    let train_out = graph.add_variable(&ctx, (1, 10), vec![0.0; 10]);
+    let train_out = graph.add_variable((1, 10), vec![0.0; 10]);
     // Use mean squared error loss function
-    let loss = graph.add_node(&ctx,
-                              Mse::new(),
+    let loss = graph.add_node(Mse::new(),
                               vec![l2_relu_out, train_out],
                               &[(1, 10)]);
     // Grab the VarIndex for loss's output
     let loss_out = loss.get(&graph).outputs[0];
     // Create a gradient to apply to the loss function
-    let loss_d = graph.add_gradient(&ctx, loss, 0);
+    let loss_d = graph.add_gradient(loss, 0);
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -131,7 +125,7 @@ fn main() {
         input.get(&graph).set(&ctx, &train_images[train_sample]);
         train_out.get(&graph).set(&ctx, &train_labels_logits[train_sample]);
 
-        graph.run(&ctx);
+        graph.run();
         let out = l2_relu_out.get(&graph).get(&ctx);
         let out_d = l2_relu.get(&graph)
                            .out_grad[0]
@@ -182,7 +176,7 @@ fn main() {
         input.get(&graph).set(&ctx, &val_images[train_sample]);
         train_out.get(&graph).set(&ctx, &val_labels_logits[train_sample]);
 
-        graph.run(&ctx);
+        graph.run();
         let out = l2_relu_out.get(&graph).get(&ctx);
         let out_d = l2_relu.get(&graph)
                            .out_grad[0]
