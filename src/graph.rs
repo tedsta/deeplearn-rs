@@ -5,7 +5,7 @@ use matrix::{self, ClMatrix, ClMatrixMode};
 use rand;
 
 use super::init::Initializer;
-use super::op::Operation;
+use super::op::{OpBuilder, Operation};
 use super::var_store::{VarIndex, VarStore};
 
 #[derive(Clone)]
@@ -93,17 +93,16 @@ impl Graph {
         }
     }
 
-    pub fn add_node<T: Operation>(&mut self,
-                    op: T,
-                    inputs: Vec<VarIndex>,
-                    out_shapes: &[(usize, usize)])
-                    -> NodeIndex {
+    pub fn add_node<T: OpBuilder>(&mut self, op: T) -> NodeIndex
+                                  where T::Op: Operation {
         let node_index = NodeIndex(self.nodes.len());
+
+        let (op, inputs, out_shapes): (_, Vec<VarIndex>, Vec<Vec<usize>>) = op.build(&self.ctx, &self.var_store).unwrap();
 
         // Create output variables
         let mut outputs = vec![];
-        for (i, &(rows, cols)) in out_shapes.iter().enumerate() {
-            let var_index = self.var_store.add(ClMatrix::new(self.ctx.as_ref(), rows, cols, ClMatrixMode::Mut));
+        for (i, shape) in out_shapes.iter().enumerate() {
+            let var_index = self.var_store.add(ClMatrix::new(self.ctx.as_ref(), shape[0], shape[1], ClMatrixMode::Mut));
             outputs.push(var_index);
             self.out_var_map.insert(var_index, (node_index, i));
         }
@@ -209,9 +208,7 @@ fn it_works() {
     let a = graph.add_variable((1, 2), vec![1.4, 0.3]);
     let wa = graph.add_variable((2, 3), vec![0.5, 0.3, 0.2,
                                                    0.6, 0.7, 0.7]);
-    let node = graph.add_node(MatMul::new(&ctx, (1, 2), (2, 3)),
-                              vec![a, wa],
-                              &[(1, 3)]);
+    let node = graph.add_node(MatMul(a, wa));
     let node_g = graph.add_gradient(node, 0);
 
     // Send some input data
