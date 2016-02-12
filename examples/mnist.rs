@@ -98,7 +98,7 @@ fn main() {
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    // We apply a gradient of -0.1 to the loss function
+    // We apply a gradient of -0.001 to the loss function
     let loss_d_cpu = Matrix::from_vec(1, 10, vec![-0.001; 10]);
     loss_d.get(&graph).set(&ctx, &loss_d_cpu);
 
