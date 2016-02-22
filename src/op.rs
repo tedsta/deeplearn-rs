@@ -52,7 +52,7 @@ impl Operation for MatMulImpl {
         let a = &v.get(n.inputs[0]);
         let b = &v.get(n.inputs[1]);
         let c = &v.get(n.outputs[0]);
-        a.dot(ctx, b, c); // c = a*b
+        ga::matmul(ctx, a, b, c); // c = a*b
     }
 
     fn backward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
@@ -64,13 +64,13 @@ impl Operation for MatMulImpl {
         
         // Derivative with respect to first input
         // a_d = g*b_t
-        b.transpose(ctx, &self.b_t);
-        g.dot(ctx, &self.b_t, a_d);
+        ga::transpose(ctx, b, &self.b_t);
+        ga::matmul(ctx, g, &self.b_t, a_d);
 
         // Derivative with respect to second input
         // b_d = a_t*g
-        a.transpose(ctx, &self.a_t);
-        self.a_t.dot(ctx, g, b_d);
+        ga::transpose(ctx, a, &self.a_t);
+        ga::matmul(ctx, &self.a_t, g, b_d);
     }
 }
 
@@ -109,15 +109,15 @@ impl Operation for AddImpl {
         let a = &v.get(n.inputs[0]);
         let b = &v.get(n.inputs[1]);
         let c = &v.get(n.outputs[0]);
-        a.add(ctx, self.axis, b, c); // c = a+b
+        ga::add(ctx, a, self.axis, b, c); // c = a+b
     }
 
     fn backward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
         let a_d = &v.get(n.in_grad[0]);
         let b_d = &v.get(n.in_grad[1]);
         let g = &v.get(n.out_grad[0].gradient());
-        g.copy_to(ctx, a_d);
-        g.sum(ctx, self.axis as usize, b_d);
+        ga::copy_to(ctx, g, a_d);
+        ga::sum(ctx, g, self.axis as usize, b_d);
     }
 }
 
@@ -141,15 +141,15 @@ impl Operation for ReluImpl {
     fn forward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
         let a = &v.get(n.inputs[0]);
         let b = &v.get(n.outputs[0]);
-        a.max(ctx, 0.0, b); // b = max(0, a)
+        ga::max(ctx, a, 0.0, b); // b = max(0, a)
     }
 
     fn backward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
         let a = &v.get(n.inputs[0]);
         let a_d = &v.get(n.in_grad[0]);
         let g = &v.get(n.out_grad[0].gradient());
-        a.dmax(ctx, 0.0, a_d);
-        g.multiply(ctx, -1, a_d, a_d);
+        ga::dmax(ctx, a, 0.0, a_d);
+        ga::multiply(ctx, g, -1, a_d, a_d);
     }
 }
 
@@ -178,7 +178,7 @@ impl Operation for MseImpl {
         let h = &v.get(n.inputs[0]); // predictions
         let y = &v.get(n.inputs[1]); // training output
         let out = &v.get(n.outputs[0]);
-        h.mse(ctx, y, out); // out = mse(h, y)
+        ga::mse(ctx, h, y, out); // out = mse(h, y)
     }
 
     fn backward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
@@ -186,7 +186,74 @@ impl Operation for MseImpl {
         let h_d = &v.get(n.in_grad[0]);
         let y = &v.get(n.inputs[1]); // training output
         let g = &v.get(n.out_grad[0].gradient());
-        h.dmse(ctx, y, h_d); // h_d = dmse(h, y)
-        h_d.multiply(ctx, 0, g, h_d); // h_d = g*h_d
+        ga::dmse(ctx, h, y, h_d); // h_d = dmse(h, y)
+        ga::multiply(ctx, h_d, 0, g, h_d); // h_d = g*h_d
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Lstm(input, state)
+/*pub struct Lstm(pub VarIndex, pub VarIndex, usize);
+
+impl OpBuilder for Lstm {
+    type Op = LstmImpl;
+
+    fn build(&self, _: &ga::Context, v: &VarStore)
+             -> Result<(LstmImpl, Vec<VarIndex>, Vec<Vec<usize>>), String> {
+        let x = &v.get(self.0);
+        let s = &v.get(self.1);
+        let hidden_size = self.2;
+        if x.shape() != s.shape() {
+            return Err("DIM ERROR: Shapes must be equal for LSTM".to_string());
+        }
+        Ok((LstmImpl::new(), vec![self.0, self.1], vec![x.shape().to_vec()]))
+    }
+}
+
+pub struct LstmImpl {
+    ifog: Tensor<f32>, // input, forget, output, gate (IFOG)
+    
+    // Recurrent connections from last sequence
+    c0: Tensor<f32>,
+    h0: Tensor<f32>,
+
+    seq_len: usize,
+    batch_size: usize,
+    input_size: usize,
+    hidden_size: usize,
+}
+
+impl LstmImpl {
+    fn new(seq_len: usize, batch_size: usize, input_size: usize, hidden_size: usize) -> Self {
+        let n = seq_len;
+        let b = batch_size;
+        let d = hidden_size;
+        LstmImpl {
+            ifog: Tensor::new(ctx, vec![n, b, d*4], TensorMode::Mut)),
+            c0: Tensor::new(ctx, vec![b, d], TensorMode::Mut)),
+            h0: Tensor::new(ctx, vec![b, d], TensorMode::Mut)),
+
+            seq_len: seq_len,
+            batch_size: batch_size,
+            input_size: input_size,
+            hidden_size: hidden_size,
+        }
+    }
+}
+
+impl Operation for LstmImpl {
+    fn forward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
+        let x = &v.get(n.inputs[0]); // input
+        let c = &v.get(n.outputs[0]); // cell
+        let h = &v.get(n.outputs[1]); // output
+
+        for t in 0..self.seq_len {
+            self.ifog[t].dot(ctx, h);
+            h.mse(ctx, y, out); // out = mse(h, y)
+        }
+    }
+
+    fn backward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
+    }
+}*/

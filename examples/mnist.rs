@@ -117,10 +117,10 @@ fn main() {
         let l2_w_d = graph.get_input_gradient(l2_w).unwrap().get(&graph);
         let l1_b_d = graph.get_input_gradient(l1_b).unwrap().get(&graph);
         let l2_b_d = graph.get_input_gradient(l2_b).unwrap().get(&graph);
-        l1_w.get(&graph).add(&ctx, -1, &*l1_w_d, &*l1_w.get(&graph));
-        l2_w.get(&graph).add(&ctx, -1, &*l2_w_d, &*l2_w.get(&graph));
-        l1_b.get(&graph).add(&ctx, -1, &*l1_b_d, &*l1_b.get(&graph));
-        l2_b.get(&graph).add(&ctx, -1, &*l2_b_d, &*l2_b.get(&graph));
+        ga::add(&ctx, &l1_w.get(&graph), -1, &l1_w_d, &l1_w.get(&graph));
+        ga::add(&ctx, &l2_w.get(&graph), -1, &l2_w_d, &l2_w.get(&graph));
+        ga::add(&ctx, &l1_b.get(&graph), -1, &l1_b_d, &l1_b.get(&graph));
+        ga::add(&ctx, &l2_b.get(&graph), -1, &l2_b_d, &l2_b.get(&graph));
 
         let (mut max_index, mut max_value) = (0, out[&[0, 0]]);
         for (i, val) in out.buffer().iter().enumerate() {
