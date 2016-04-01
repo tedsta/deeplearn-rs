@@ -212,11 +212,13 @@ impl OpBuilder for Lstm {
 }
 
 pub struct LstmImpl {
-    ifog: Tensor<f32>, // input, forget, output, gate (IFOG)
+    ifog: af::Array, // input, forget, output, gate (IFOG)
+    ifog_f: af::Array,
+    c: af::Array,
     
     // Recurrent connections from last sequence
-    c0: Tensor<f32>,
-    h0: Tensor<f32>,
+    c0: af::Array,
+    h0: af::Array,
 
     seq_len: usize,
     batch_size: usize,
@@ -230,9 +232,9 @@ impl LstmImpl {
         let b = batch_size;
         let d = hidden_size;
         LstmImpl {
-            ifog: Tensor::new(ctx, vec![n, b, d*4], TensorMode::Mut)),
-            c0: Tensor::new(ctx, vec![b, d], TensorMode::Mut)),
-            h0: Tensor::new(ctx, vec![b, d], TensorMode::Mut)),
+            ifog: Tensor::new(vec![n, b, d*4], TensorMode::Mut),
+            c0: Tensor::new(vec![b, d], TensorMode::Mut),
+            h0: Tensor::new(vec![b, d], TensorMode::Mut),
 
             seq_len: seq_len,
             batch_size: batch_size,
@@ -244,13 +246,33 @@ impl LstmImpl {
 
 impl Operation for LstmImpl {
     fn forward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
+        let n = self.seq_len;
+        let b = self.batch_size;
+        let d = self.hidden_size;
+        let i = self.input_size;
+
         let x = &v.get(n.inputs[0]); // input
-        let c = &v.get(n.outputs[0]); // cell
+        let wlstm = &v.get(n.inputs[1]); // all of the weights for all the cells
+        let c_f = &v.get(n.outputs[0]); // cell
         let h = &v.get(n.outputs[1]); // output
 
         for t in 0..self.seq_len {
-            self.ifog[t].dot(ctx, h);
-            h.mse(ctx, y, out); // out = mse(h, y)
+            // Output from last time step
+            let ref prevh = if t > 0 { h.slice(s![t-1]) } else { self.h0 };
+            // Input
+            ga::fill(Hin.slice(s![t, .., 0]), 1); // bias
+            ga::copy_slice(ctx, x.slice(s![t]), Hin.slice(s![t, .., 1..i+1]));
+            ga::copy_slice(ctx, prevh, Hin.slice(s![t, .., i+1..]));
+            // Multiply inputs and weights, and add biases; all in one dot product!
+            ga::matmul(ctx, Hin, WLSTM, self.ifog.slice(s![t]));
+            // Compute internal activations
+            ga::sigmoid(ctx, IFOG.slice(s![t, .., ..3*d]), IFOGf.slice(s![t, .., ..3*d])); // sigmoids; these are the gates
+            ga::tanh(ctx, IFOG.slice(s![t, .., 3*d..]), IFOGf.slice(s![t, .., 3*d..])); // tanh
+            // compute the LSTM cell activation
+            let ref prevc = if t > 0 { c.slice(s![t-1]) } else { self.c0 };
+            c.slice(s![t]) = IFOGf.slice(s![t, .., ..d]) * IFOGf.slice(s![t, .., 3*d..]) + IFOGf.slice(s![t, .., d..2*d]) * prevc
+            ga::tanh(ctx, c.slice(s![t]), c_f.slice(s![t]));
+            ga::multiply(ctx, self.ifog_f.slice(s![t, .., 2*d..3*d]), Ct.slice(s![t]), h.slice(s![t]));
         }
     }
 
