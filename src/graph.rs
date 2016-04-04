@@ -181,6 +181,10 @@ impl Graph {
             op.backward(&self.ctx, &mut self.var_store, node);
         }
     }
+
+    pub fn context(&self) -> &ga::Context {
+        &self.ctx
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

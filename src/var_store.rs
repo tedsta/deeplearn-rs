@@ -1,6 +1,6 @@
 use std::cell::{Ref, RefCell, RefMut};
 
-use ga::Tensor;
+use ga::{Array, Tensor};
 
 use super::graph::Graph;
 
@@ -35,11 +35,15 @@ impl VarStore {
 pub struct VarIndex(usize);
 
 impl VarIndex {
-    pub fn get<'a>(&self, g: &'a Graph) -> Ref<'a, Tensor<f32>> {
-        g.var_store.get(*self)
+    pub fn get<'a>(self, g: &'a Graph) -> Ref<'a, Tensor<f32>> {
+        g.var_store.get(self)
     }
 
-    pub fn get_mut<'a>(&self, g: &'a mut Graph) -> RefMut<'a, Tensor<f32>> {
-        g.var_store.get_mut(*self)
+    pub fn get_cpu(self, g: &Graph) -> Array<f32> {
+        g.var_store.get(self).get(g.context())
+    }
+
+    pub fn get_mut<'a>(self, g: &'a mut Graph) -> RefMut<'a, Tensor<f32>> {
+        g.var_store.get_mut(self)
     }
 }
