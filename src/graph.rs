@@ -105,7 +105,7 @@ impl Graph {
             outputs.push(var_index);
             self.out_var_map.insert(var_index, (node_index, i));
         }
-        // Create input gradient variables and set up gradient back flow
+        // Create input gradient variables and set up gradient back-flow
         let mut in_grad = vec![];
         for input in &inputs {
             // Create input gradient variables
@@ -113,10 +113,11 @@ impl Graph {
             let var_index = self.var_store.add(Tensor::new(self.ctx.as_ref(), shape, TensorMode::Mut));
             in_grad.push(var_index);
 
-            // Set up gradient back flow
+            // Set up gradient back-flow
             match self.out_var_map.get(input).map(|x| *x) {
                 Some((in_node, out_index)) => {
-                    self.nodes[in_node.0].out_grad[out_index].fork(self.ctx.as_ref(), &mut self.var_store, var_index);
+                    self.nodes[in_node.0].out_grad[out_index]
+                                         .fork(self.ctx.as_ref(), &mut self.var_store, var_index);
                 },
                 None => {
                     // This input doesn't come from a node's output. It is an input to the graph.
