@@ -105,6 +105,7 @@ fn main() {
     /////////////////////////
     // Train the network
     let mut correct = 0;
+    let mut out = Array::new(vec![1, 10], 0.0);
     for epoch in 0..60000 {
         // Upload training data
         let train_sample = epoch%train_images.len();
@@ -112,7 +113,7 @@ fn main() {
         train_out.get(&graph).set(&ctx, &train_labels_logits[train_sample]);
 
         graph.run();
-        let out = l2_relu_out.get(&graph).get(&ctx);
+        l2_relu_out.get(&graph).read(&ctx, &mut out);
         let l1_w_d = graph.get_input_gradient(l1_w).unwrap().get(&graph);
         let l2_w_d = graph.get_input_gradient(l2_w).unwrap().get(&graph);
         let l1_b_d = graph.get_input_gradient(l1_b).unwrap().get(&graph);
