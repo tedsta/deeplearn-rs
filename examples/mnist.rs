@@ -48,14 +48,14 @@ fn main() {
 
     // Input.  1 batches of rows*columns inputs each.
     let input = graph.add_variable((1, rows*columns), vec![0.0; rows*columns]);
-    // Weights for layer 1: [rows*columns inputs x 1000 nodes]
-    let l1_w = graph.add_variable((rows*columns, 1000), init::Normal(0.001, 0.005));
+    // Weights for layer 1: [rows*columns inputs x 300 nodes]
+    let l1_w = graph.add_variable((rows*columns, 300), init::Normal(0.001, 0.005));
     // Use matrix multiplication to do a fully connected layer
     let l1_mat_mul = graph.add_node(MatMul(input, l1_w));
     // Grab VarIndex for l1_mat_mul's output
     let l1_mat_mul_out = l1_mat_mul.get(&graph).outputs[0]; 
-    // 1000 biases; one for each node in layer 1
-    let l1_b = graph.add_variable((1, 1000), init::Normal(0.001, 0.005));
+    // 300 biases; one for each node in layer 1
+    let l1_b = graph.add_variable((1, 300), init::Normal(0.001, 0.005));
     // Here we add the biases to the matrix multiplication output
     let l1_biased = graph.add_node(Add(l1_mat_mul_out, l1_b, 0));
     // Grab VarIndex for l1_biased's output
@@ -67,8 +67,8 @@ fn main() {
     //////////////////////////
     // Layer 2
 
-    // Weights for layer 2: [1000 inputs x 10 nodes]
-    let l2_w = graph.add_variable((1000, 10), init::Normal(0.001, 0.005));
+    // Weights for layer 2: [300 inputs x 10 nodes]
+    let l2_w = graph.add_variable((300, 10), init::Normal(0.001, 0.005));
     // Fully connected layer 2. Use layer 1's output as layer 2's input
     let l2_mat_mul = graph.add_node(MatMul(l1_relu_out, l2_w));
     // Grab VarIndex for l2_mat_mul's output
