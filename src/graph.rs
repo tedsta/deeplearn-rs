@@ -93,8 +93,7 @@ impl Graph {
         }
     }
 
-    pub fn add_node<T: OpBuilder>(&mut self, op: T) -> NodeIndex
-                                  where T::Op: Operation {
+    pub fn add_node<T: OpBuilder>(&mut self, op: T) -> NodeIndex {
         let node_index = NodeIndex(self.nodes.len());
 
         let (op, inputs, out_shapes): (_, Vec<VarIndex>, Vec<Vec<usize>>) = op.build(&self.ctx, &self.var_store).unwrap();

@@ -10,7 +10,7 @@ pub trait Operation : 'static {
 }
 
 pub trait OpBuilder {
-    type Op;
+    type Op: Operation;
 
     fn build(&self, ctx: &ga::Context, v: &VarStore)
              -> Result<(Self::Op, Vec<VarIndex>, Vec<Vec<usize>>), String>;
