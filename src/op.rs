@@ -199,26 +199,30 @@ impl Operation for MseImpl {
 impl OpBuilder for Lstm {
     type Op = LstmImpl;
 
-    fn build(&self, _: &ga::Context, v: &VarStore)
+    fn build(&self, ctx: &ga::Context, v: &VarStore)
              -> Result<(LstmImpl, Vec<VarIndex>, Vec<Vec<usize>>), String> {
         let x = &v.get(self.0);
         let s = &v.get(self.1);
+        let seq_len = x.shape()[0];
+        let batch_size = x.shape()[1];
+        let input_size = x.shape()[2];
         let hidden_size = self.2;
         if x.shape() != s.shape() {
             return Err("DIM ERROR: Shapes must be equal for LSTM".to_string());
         }
-        Ok((LstmImpl::new(), vec![self.0, self.1], vec![x.shape().to_vec()]))
+        Ok((LstmImpl::new(ctx, seq_len, batch_size, input_size, hidden_size),
+            vec![self.0, self.1], vec![x.shape().to_vec()]))
     }
 }
 
 pub struct LstmImpl {
-    ifog: af::Array, // input, forget, output, gate (IFOG)
-    ifog_f: af::Array,
-    c: af::Array,
+    ifog: ga::Tensor<f32>, // input, forget, output, gate (IFOG): input sums
+    ifog_f: ga::Tensor<f32>, // input, forget, output, gate: activations
+    c: ga::Tensor<f32>,
     
     // Recurrent connections from last sequence
-    c0: af::Array,
-    h0: af::Array,
+    c0: ga::Tensor<f32>,
+    h0: ga::Tensor<f32>,
 
     seq_len: usize,
     batch_size: usize,
@@ -227,14 +231,21 @@ pub struct LstmImpl {
 }
 
 impl LstmImpl {
-    fn new(seq_len: usize, batch_size: usize, input_size: usize, hidden_size: usize) -> Self {
+    fn new(ctx: &ga::Context,
+           seq_len: usize,
+           batch_size: usize,
+           input_size: usize,
+           hidden_size: usize) -> Self {
         let n = seq_len;
         let b = batch_size;
         let d = hidden_size;
         LstmImpl {
-            ifog: Tensor::new(vec![n, b, d*4], TensorMode::Mut),
-            c0: Tensor::new(vec![b, d], TensorMode::Mut),
-            h0: Tensor::new(vec![b, d], TensorMode::Mut),
+            ifog: Tensor::new(ctx, vec![n, b, d*4], TensorMode::Mut),
+            ifog_f: Tensor::new(ctx, vec![n, b, d*4], TensorMode::Mut),
+            c: Tensor::new(ctx, vec![n, b, d], TensorMode::Mut),
+
+            c0: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
+            h0: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
 
             seq_len: seq_len,
             batch_size: batch_size,
@@ -245,34 +256,43 @@ impl LstmImpl {
 }
 
 impl Operation for LstmImpl {
-    fn forward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
+    fn forward(&mut self, ctx: &ga::Context, v: &mut VarStore, node: &mut Node) {
         let n = self.seq_len;
         let b = self.batch_size;
         let d = self.hidden_size;
         let i = self.input_size;
 
-        let x = &v.get(n.inputs[0]); // input
-        let wlstm = &v.get(n.inputs[1]); // all of the weights for all the cells
-        let c_f = &v.get(n.outputs[0]); // cell
-        let h = &v.get(n.outputs[1]); // output
+        let x = &v.get(node.inputs[0]); // input
+        let wlstm = &v.get(node.inputs[1]); // all of the weights for all the cells
+
+        // recurrent connections
+        let ref c0 = self.c0;
+        let ref h0 = self.h0;
+
+        let ref ifog = self.ifog;
+        let ref ifog_f = self.ifog_f;
+        let ref c = self.c;
+
+        let c_f = &v.get(node.outputs[0]); // cell
+        let h = &v.get(node.outputs[1]); // output
 
         for t in 0..self.seq_len {
             // Output from last time step
-            let ref prevh = if t > 0 { h.slice(s![t-1]) } else { self.h0 };
+            let ref prevh = if t > 0 { h.slice(s![t-1]) } else { h0 };
             // Input
-            ga::fill(Hin.slice(s![t, .., 0]), 1); // bias
-            ga::copy_slice(ctx, x.slice(s![t]), Hin.slice(s![t, .., 1..i+1]));
-            ga::copy_slice(ctx, prevh, Hin.slice(s![t, .., i+1..]));
+            ga::fill(h_in.slice(s![t, .., 0]), 1.0); // bias
+            ga::copy_slice(ctx, x.slice(s![t]), h_in.slice(s![t, .., 1..i+1]));
+            ga::copy_slice(ctx, prevh, h_in.slice(s![t, .., i+1..]));
             // Multiply inputs and weights, and add biases; all in one dot product!
-            ga::matmul(ctx, Hin, WLSTM, self.ifog.slice(s![t]));
+            ga::matmul(ctx, h_in, wlstm, ifog.slice(s![t]));
             // Compute internal activations
-            ga::sigmoid(ctx, IFOG.slice(s![t, .., ..3*d]), IFOGf.slice(s![t, .., ..3*d])); // sigmoids; these are the gates
-            ga::tanh(ctx, IFOG.slice(s![t, .., 3*d..]), IFOGf.slice(s![t, .., 3*d..])); // tanh
+            ga::sigmoid(ctx, ifog.slice(s![t, .., ..3*d]), ifog_f.slice(s![t, .., ..3*d])); // sigmoids; these are the gates
+            ga::tanh(ctx, ifog.slice(s![t, .., 3*d..]), ifog_f.slice(s![t, .., 3*d..])); // tanh
             // compute the LSTM cell activation
-            let ref prevc = if t > 0 { c.slice(s![t-1]) } else { self.c0 };
-            c.slice(s![t]) = IFOGf.slice(s![t, .., ..d]) * IFOGf.slice(s![t, .., 3*d..]) + IFOGf.slice(s![t, .., d..2*d]) * prevc
+            let ref prevc = if t > 0 { c.slice(s![t-1]) } else { c0 };
+            c.slice(s![t]) = ifog_f.slice(s![t, .., ..d]) * ifog_f.slice(s![t, .., 3*d..]) + ifog_f.slice(s![t, .., d..2*d]) * prevc
             ga::tanh(ctx, c.slice(s![t]), c_f.slice(s![t]));
-            ga::multiply(ctx, self.ifog_f.slice(s![t, .., 2*d..3*d]), Ct.slice(s![t]), h.slice(s![t]));
+            ga::multiply(ctx, ifog_f.slice(s![t, .., 2*d..3*d]), c_f.slice(s![t]), h.slice(s![t]));
         }
     }
 
