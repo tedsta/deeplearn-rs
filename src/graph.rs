@@ -138,9 +138,9 @@ impl Graph {
     }
 
     pub fn add_variable<I: Initializer>(&mut self,
-                                        shape: (usize, usize),
+                                        shape: Vec<usize>,
                                         init: I) -> VarIndex {
-        let a = init.init(&mut self.rng, vec![shape.0, shape.1]);
+        let a = init.init(&mut self.rng, shape);
         let v = self.var_store.add(Tensor::from_array(&self.ctx, &a, TensorMode::Mut));
         self.in_var_grad.insert(v, OutGrad::new());
         v
@@ -210,8 +210,8 @@ fn it_works() {
 
     // Setup the graph
     let mut graph = Graph::new(ctx.clone());
-    let a = graph.add_variable((1, 2), vec![1.4, 0.3]);
-    let wa = graph.add_variable((2, 3), vec![0.5, 0.3, 0.2,
+    let a = graph.add_variable(vec![1, 2], vec![1.4, 0.3]);
+    let wa = graph.add_variable(vec![2, 3], vec![0.5, 0.3, 0.2,
                                              0.6, 0.7, 0.7]);
     let node = graph.add_node(MatMul(a, wa));
     let node_g = graph.add_gradient(node, 0);
