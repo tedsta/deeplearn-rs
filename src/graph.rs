@@ -81,7 +81,7 @@ pub struct Graph {
 }
 
 impl Graph {
-    pub fn new(ctx: Rc<ga::Context>,) -> Self {
+    pub fn new(ctx: Rc<ga::Context>) -> Self {
         Graph {
             ctx: ctx,
             nodes: vec![],

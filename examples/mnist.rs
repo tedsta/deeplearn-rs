@@ -13,7 +13,7 @@ use std::num::{Zero, One};
 use std::path::Path;
 use std::rc::Rc;
 
-use deeplearn::Graph;
+use deeplearn::{Graph, Trainer};
 use deeplearn::op::{Add, MatMul, Mse, Relu};
 use deeplearn::init;
 use ga::Array;
@@ -101,6 +101,14 @@ fn main() {
     // We apply a gradient of -0.001 to the loss function
     let loss_d_cpu = Array::from_vec(vec![1, 10], vec![-0.001; 10]);
     loss_d.get(&graph).set(&ctx, &loss_d_cpu);
+
+    let trainer = Trainer;
+
+    trainer.train(&mut graph, 5000,
+                  vec![l1_w, l1_b, l2_w, l2_b],
+                  vec![l2_relu_out],
+                  vec![(input, &train_images)],
+                  vec![(train_out, &train_labels_logits)]);
 
     /////////////////////////
     // Train the network
