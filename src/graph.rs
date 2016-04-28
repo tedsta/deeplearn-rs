@@ -161,7 +161,7 @@ impl Graph {
         v
     }
 
-    pub fn run(&mut self) {
+    pub fn forward(&mut self) {
         // Forward pass
         //
         // NOTE: We just execute the nodes in order. We can do this because of the way the graph is
@@ -171,8 +171,11 @@ impl Graph {
         for (node, op) in self.nodes.iter_mut().zip(&mut self.node_ops) {
             op.forward(&self.ctx, &mut self.var_store, node);
         }
+    }
 
+    pub fn backward(&mut self) {
         // Backward pass
+        // We run through the nodes in reverse order. See note in Graph::forward
         for (node, op) in self.nodes.iter_mut().rev().zip(self.node_ops.iter_mut().rev()) {
             // Sum the gradients on each output if there are multiple gradients
             for out_grad in &node.out_grad {
@@ -221,7 +224,8 @@ fn it_works() {
     node_g.get(&graph).set(&ctx, &node_g_cpu);
 
     // Run the network
-    graph.run();
+    graph.forward();
+    graph.backward();
     let out = node.get(&graph).outputs[0].get(&graph).get(&ctx);
     let wa_d = graph.get_input_gradient(wa).unwrap().get(&graph).get(&ctx);
     println!("out = {:?}", out);

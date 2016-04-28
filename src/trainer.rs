@@ -33,7 +33,8 @@ impl Trainer {
             }
 
             // Run the graph
-            graph.run();
+            graph.forward();
+            graph.backward();
 
             // Get the output
             for (out_var, output) in out_vars.iter().zip(outputs.iter_mut()) {

@@ -120,7 +120,8 @@ fn main() {
         input.get(&graph).set(&ctx, &train_images[train_sample]);
         train_out.get(&graph).set(&ctx, &train_labels_logits[train_sample]);
 
-        graph.run();
+        graph.forward();
+        graph.backward();
         l2_relu_out.get(&graph).read(&ctx, &mut out);
         let l1_w_d = graph.get_input_gradient(l1_w).unwrap().get(&graph);
         let l2_w_d = graph.get_input_gradient(l2_w).unwrap().get(&graph);
@@ -171,7 +172,7 @@ fn main() {
         input.get(&graph).set(&ctx, &val_images[train_sample]);
         train_out.get(&graph).set(&ctx, &val_labels_logits[train_sample]);
 
-        graph.run();
+        graph.forward();
         let out = l2_relu_out.get(&graph).get(&ctx);
 
         let (mut max_index, mut max_value) = (0, out[&[0, 0]]);
