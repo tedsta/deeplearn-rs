@@ -13,7 +13,13 @@ pub trait OpBuilder {
     type Op: Operation;
 
     fn build(&self, ctx: &ga::Context, v: &VarStore)
-             -> Result<(Self::Op, Vec<VarIndex>, Vec<Vec<usize>>), String>;
+             -> Result<OpDescriptor<Self::Op>, String>;
+}
+
+pub struct OpDescriptor<T: Operation> {
+    pub op: T,
+    pub inputs: Vec<VarIndex>,
+    pub out_shapes: Vec<Vec<usize>>,
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -24,12 +30,14 @@ impl OpBuilder for MatMul {
     type Op = MatMulImpl;
 
     fn build(&self, ctx: &ga::Context, v: &VarStore)
-             -> Result<(MatMulImpl, Vec<VarIndex>, Vec<Vec<usize>>), String> {
+             -> Result<OpDescriptor<MatMulImpl>, String> {
         let a = &v.get(self.0);
         let b = &v.get(self.1);
-        Ok((MatMulImpl::new(ctx, a.shape().to_vec(), b.shape().to_vec()),
-            vec![self.0, self.1],
-            vec![vec![a.shape()[0], b.shape()[1]]]))
+        Ok(OpDescriptor {
+            op: MatMulImpl::new(ctx, a.shape().to_vec(), b.shape().to_vec()),
+            inputs: vec![self.0, self.1],
+            out_shapes: vec![vec![a.shape()[0], b.shape()[1]]],
+        })
     }
 }
 
@@ -82,13 +90,17 @@ impl OpBuilder for Add {
     type Op = AddImpl;
 
     fn build(&self, _: &ga::Context, v: &VarStore)
-             -> Result<(AddImpl, Vec<VarIndex>, Vec<Vec<usize>>), String> {
+             -> Result<OpDescriptor<AddImpl>, String> {
         let a = &v.get(self.0);
         let b = &v.get(self.1);
         if a.shape() != b.shape() {
             return Err("DIM ERROR: Shapes must be equal for Add".to_string());
         }
-        Ok((AddImpl::new(self.2), vec![self.0, self.1], vec![a.shape().to_vec()]))
+        Ok(OpDescriptor {
+            op: AddImpl::new(self.2),
+            inputs: vec![self.0, self.1],
+            out_shapes: vec![a.shape().to_vec()]
+        })
     }
 }
 
@@ -129,9 +141,13 @@ impl OpBuilder for Relu {
     type Op = ReluImpl;
 
     fn build(&self, _: &ga::Context, v: &VarStore)
-             -> Result<(ReluImpl, Vec<VarIndex>, Vec<Vec<usize>>), String> {
+             -> Result<OpDescriptor<ReluImpl>, String> {
         let a = &v.get(self.0);
-        Ok((ReluImpl, vec![self.0], vec![a.shape().to_vec()]))
+        Ok(OpDescriptor {
+            op: ReluImpl,
+            inputs: vec![self.0],
+            out_shapes: vec![a.shape().to_vec()],
+        })
     }
 }
 
@@ -161,13 +177,17 @@ impl OpBuilder for Mse {
     type Op = MseImpl;
 
     fn build(&self, _: &ga::Context, v: &VarStore)
-             -> Result<(MseImpl, Vec<VarIndex>, Vec<Vec<usize>>), String> {
+             -> Result<OpDescriptor<MseImpl>, String> {
         let a = &v.get(self.0);
         let b = &v.get(self.1);
         if a.shape() != b.shape() {
             return Err("DIM ERROR: Shapes must be equal for MSE".to_string());
         }
-        Ok((MseImpl, vec![self.0, self.1], vec![a.shape().to_vec()]))
+        Ok(OpDescriptor {
+            op: MseImpl,
+            inputs: vec![self.0, self.1],
+            out_shapes: vec![a.shape().to_vec()],
+        })
     }
 }
 
@@ -200,7 +220,7 @@ impl OpBuilder for Lstm {
     type Op = LstmImpl;
 
     fn build(&self, ctx: &ga::Context, v: &VarStore)
-             -> Result<(LstmImpl, Vec<VarIndex>, Vec<Vec<usize>>), String> {
+             -> Result<OpDescriptor<LstmImpl>, String> {
         let x = &v.get(self.0);
         let s = &v.get(self.1);
         let seq_len = x.shape()[0];
@@ -210,8 +230,11 @@ impl OpBuilder for Lstm {
         if x.shape() != s.shape() {
             return Err("DIM ERROR: Shapes must be equal for LSTM".to_string());
         }
-        Ok((LstmImpl::new(ctx, seq_len, batch_size, input_size, hidden_size),
-            vec![self.0, self.1], vec![x.shape().to_vec()]))
+        Ok(OpDescriptor {
+            op: LstmImpl::new(ctx, seq_len, batch_size, input_size, hidden_size),
+            inputs: vec![self.0, self.1],
+            out_shapes: vec![x.shape().to_vec()],
+        })
     }
 }
 

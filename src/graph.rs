@@ -5,7 +5,7 @@ use ga::{self, Tensor, TensorMode};
 use rand;
 
 use super::init::Initializer;
-use super::op::{OpBuilder, Operation};
+use super::op::{OpBuilder, OpDescriptor, Operation};
 use super::var_store::{VarIndex, VarStore};
 
 #[derive(Clone)]
@@ -96,7 +96,7 @@ impl Graph {
     pub fn add_node<T: OpBuilder>(&mut self, op: T) -> NodeIndex {
         let node_index = NodeIndex(self.nodes.len());
 
-        let (op, inputs, out_shapes): (_, Vec<VarIndex>, Vec<Vec<usize>>) = op.build(&self.ctx, &self.var_store).unwrap();
+        let OpDescriptor { op, inputs, out_shapes } = op.build(&self.ctx, &self.var_store).unwrap();
 
         // Create output variables
         let mut outputs = vec![];
