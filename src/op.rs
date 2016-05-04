@@ -5,8 +5,8 @@ use super::graph::Node;
 use super::var_store::{VarIndex, VarStore};
 
 pub trait Operation : 'static {
-    fn forward(&mut self, &ga::Context, &mut VarStore, &mut Node);
-    fn backward(&mut self, &ga::Context, &mut VarStore, &mut Node);
+    fn forward(&mut self, &ga::Context, &VarStore, &Node);
+    fn backward(&mut self, &ga::Context, &VarStore, &Node);
 }
 
 pub trait OpBuilder {
@@ -56,19 +56,19 @@ impl MatMulImpl {
 }
 
 impl Operation for MatMulImpl {
-    fn forward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
+    fn forward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
         let a = &v.get(n.inputs[0]);
         let b = &v.get(n.inputs[1]);
         let c = &v.get(n.outputs[0]);
         ga::matmul(ctx, a, b, c); // c = a*b
     }
 
-    fn backward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
+    fn backward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
         let a = &v.get(n.inputs[0]);
         let b = &v.get(n.inputs[1]);
         let a_d = &v.get(n.in_grad[0]);
         let b_d = &v.get(n.in_grad[1]);
-        let g = &v.get(n.out_grad[0].gradient());
+        let g = &v.get(n.out_grad[0].get());
         
         // Derivative with respect to first input
         // a_d = g*b_t
@@ -117,17 +117,17 @@ impl AddImpl {
 }
 
 impl Operation for AddImpl {
-    fn forward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
+    fn forward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
         let a = &v.get(n.inputs[0]);
         let b = &v.get(n.inputs[1]);
         let c = &v.get(n.outputs[0]);
         ga::add(ctx, a, self.axis, b, c); // c = a+b
     }
 
-    fn backward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
+    fn backward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
         let a_d = &v.get(n.in_grad[0]);
         let b_d = &v.get(n.in_grad[1]);
-        let g = &v.get(n.out_grad[0].gradient());
+        let g = &v.get(n.out_grad[0].get());
         ga::copy_to(ctx, g, a_d);
         ga::sum(ctx, g, self.axis as usize, b_d);
     }
@@ -154,16 +154,16 @@ impl OpBuilder for Relu {
 pub struct ReluImpl;
 
 impl Operation for ReluImpl {
-    fn forward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
+    fn forward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
         let a = &v.get(n.inputs[0]);
         let b = &v.get(n.outputs[0]);
         ga::max(ctx, a, 0.0, b); // b = max(0, a)
     }
 
-    fn backward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
+    fn backward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
         let a = &v.get(n.inputs[0]);
         let a_d = &v.get(n.in_grad[0]);
-        let g = &v.get(n.out_grad[0].gradient());
+        let g = &v.get(n.out_grad[0].get());
         ga::dmax(ctx, a, 0.0, a_d);
         ga::multiply(ctx, g, -1, a_d, a_d);
     }
@@ -194,18 +194,18 @@ impl OpBuilder for Mse {
 pub struct MseImpl;
 
 impl Operation for MseImpl {
-    fn forward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
+    fn forward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
         let h = &v.get(n.inputs[0]); // predictions
         let y = &v.get(n.inputs[1]); // training output
         let out = &v.get(n.outputs[0]);
         ga::mse(ctx, h, y, out); // out = mse(h, y)
     }
 
-    fn backward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
+    fn backward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
         let h = &v.get(n.inputs[0]); // predictions
         let h_d = &v.get(n.in_grad[0]);
         let y = &v.get(n.inputs[1]); // training output
-        let g = &v.get(n.out_grad[0].gradient());
+        let g = &v.get(n.out_grad[0].get());
         ga::dmse(ctx, h, y, h_d); // h_d = dmse(h, y)
         ga::multiply(ctx, h_d, 0, g, h_d); // h_d = g*h_d
     }
@@ -279,7 +279,7 @@ impl LstmImpl {
 }
 
 impl Operation for LstmImpl {
-    fn forward(&mut self, ctx: &ga::Context, v: &mut VarStore, node: &mut Node) {
+    fn forward(&mut self, ctx: &ga::Context, v: &VarStore, node: &Node) {
         let n = self.seq_len;
         let b = self.batch_size;
         let d = self.hidden_size;
@@ -319,6 +319,6 @@ impl Operation for LstmImpl {
         }
     }
 
-    fn backward(&mut self, ctx: &ga::Context, v: &mut VarStore, n: &mut Node) {
+    fn backward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
     }
 }*/

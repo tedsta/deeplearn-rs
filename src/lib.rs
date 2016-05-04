@@ -8,6 +8,7 @@ pub use trainer::Trainer;
 
 pub mod graph;
 pub mod init;
+pub mod layers;
 pub mod op;
 pub mod trainer;
 pub mod var_store;

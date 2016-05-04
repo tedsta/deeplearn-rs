@@ -10,26 +10,21 @@ impl Trainer {
         Trainer
     }
 
-    pub fn train(&self, graph: &mut Graph, epochs: usize,
-                 learn_vars: Vec<VarIndex>,
-                 out_vars: Vec<VarIndex>,
-                 train_in: Vec<(VarIndex, &Vec<Array<f32>>)>,
-                 train_out: Vec<(VarIndex, &Vec<Array<f32>>)>) {
+    pub fn train<F>(&self, graph: &mut Graph, epochs: usize, mut update_fn: F,
+                    out_vars: &[VarIndex],
+                    training_data: &[(VarIndex, &[Array<f32>])])
+                    where F: FnMut(&mut Graph, usize),
+    {
         // Create CPU-side arrays to download our outputs into
         let mut outputs: Vec<Array<f32>> =
             out_vars.iter()
-                    .map(|out| Array::new(out.get(&graph).shape().to_owned(), 0.0))
+                    .map(|out| Array::new(out.get(graph).shape().to_owned(), 0.0))
                     .collect();
 
         for epoch in 0..epochs {
-            // Upload inputs
-            for &(t_in_var, t_in) in &train_in {
-                t_in_var.get(&graph).set(graph.context(), t_in.get(epoch).unwrap());
-            }
-
-            // Upload training labels
-            for &(t_out_var, t_out) in &train_out {
-                t_out_var.get(&graph).set(graph.context(), t_out.get(epoch).unwrap());
+            // Upload training data
+            for &(var, data) in training_data {
+                var.get(graph).set(graph.context(), data.get(epoch).unwrap());
             }
 
             // Run the graph
@@ -38,20 +33,15 @@ impl Trainer {
 
             // Get the output
             for (out_var, output) in out_vars.iter().zip(outputs.iter_mut()) {
-                out_var.get(&graph).read(&graph.context(), output);
+                out_var.get(graph).read(graph.context(), output);
             }
 
             // Apply gradients
-            for learn in learn_vars.iter().cloned() {
-                let learn_d = graph.get_input_gradient(learn).unwrap().get(&graph);
-                ga::add(&graph.context(), &learn.get(&graph), -1, &learn_d, &learn.get(&graph));
+            for &(learn, learn_d) in graph.learnables().iter() {
+                ga::add(graph.context(), &learn.get(graph), -1, &learn_d.get(graph), &learn.get(graph));
             }
 
-            if epoch % 1000 == 999 {
-                println!("===================");
-                println!("epoch {}", epoch);
-                println!("out =\n{:?}\n", outputs);
-            }
+            update_fn(graph, epoch);
         }
     }
 }

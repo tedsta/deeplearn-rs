@@ -7,6 +7,14 @@ pub trait Initializer {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+impl Initializer for f32 {
+    fn init(self, _: &mut rand::ThreadRng, shape: Vec<usize>) -> Array<f32> {
+        Array::new(shape, self)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 impl Initializer for Vec<f32> {
     fn init(self, _: &mut rand::ThreadRng, shape: Vec<usize>) -> Array<f32> {
         Array::from_vec(shape, self)
