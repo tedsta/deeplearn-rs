@@ -1,3 +1,5 @@
+#![feature(zero_one)]
+
 #[macro_use] extern crate gpuarray as ga;
 extern crate rand;
 
@@ -11,4 +13,5 @@ pub mod init;
 pub mod layers;
 pub mod op;
 pub mod trainer;
+pub mod util;
 pub mod var_store;

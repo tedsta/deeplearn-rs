@@ -1,5 +1,3 @@
-#![feature(zero_one)]
-
 extern crate deeplearn;
 extern crate gpuarray as ga;
 
@@ -9,21 +7,20 @@ use std::io::{
     BufReader,
     Read,
 };
-use std::num::{Zero, One};
 use std::path::Path;
 use std::rc::Rc;
 
-use deeplearn::{Graph, Trainer};
+use deeplearn::{init, layers, util, Graph, Trainer};
 use deeplearn::op::Relu;
-use deeplearn::init;
-use deeplearn::layers;
 use ga::Array;
 
 fn main() {
     // Training data
     println!("Reading training labels...");
     let train_labels = read_mnist_labels("data/mnist/train-labels-idx1-ubyte", None).unwrap();
-    let train_labels_logits: Vec<Array<f32>> = train_labels.iter().cloned().map(|x| one_hot(x, 10)).collect();
+    let train_labels_logits: Vec<Array<f32>> = train_labels.iter().cloned()
+                                                           .map(|x| util::one_hot_rows(x, 10))
+                                                           .collect();
     println!("Label count: {}", train_labels.len());
 
     println!("Reading training images...");
@@ -32,20 +29,24 @@ fn main() {
     // Validation data
     println!("Reading validation labels...");
     let val_labels = read_mnist_labels("data/mnist/t10k-labels-idx1-ubyte", Some(1000)).unwrap();
-    let val_labels_logits: Vec<Array<f32>> = val_labels.iter().cloned().map(|x| one_hot(x, 10)).collect();
-    println!("Label count: {}", train_labels.len());
+    println!("Label count: {}", val_labels.len());
 
     println!("Reading validation images...");
     let (_, _, val_images) = read_mnist_images("data/mnist/t10k-images-idx3-ubyte", Some(1000)).unwrap();
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+    // Build the graph
+
     let ctx = Rc::new(ga::Context::new());
     let ref mut graph = Graph::new(ctx.clone());
+
+    let batch_size = 1;
 
     //////////////////////////
     // Layer 1
 
     // Input. 1 batch of rows*columns inputs
-    let input = graph.add_variable(vec![1, rows*columns], false, vec![0.0; rows*columns]);
+    let input = graph.add_variable(vec![batch_size, rows*columns], false, vec![0.0; rows*columns]);
 
     // Biased fully connected layer with 300 neurons
     let (l1_fcb, _, _) = layers::dense_biased(graph, input, 300,
@@ -70,90 +71,78 @@ fn main() {
     let loss_d = graph.add_gradient(loss_out); // Create a gradient to apply to the loss function
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
+    // Train and validate the network
 
     // We apply a gradient of -0.001 to the loss function
-    let loss_d_cpu = Array::new(vec![1, 10], -0.001);
-    loss_d.get(graph).set(&ctx, &loss_d_cpu);
+    let loss_d_cpu = Array::new(vec![batch_size, 10], -0.001);
+    loss_d.write(graph, &loss_d_cpu);
 
-    let mut loss_out_cpu = Array::new(vec![1, 10], 0.0);
-    let mut l2_out_cpu = Array::new(vec![1, 10], 0.0);
-    let mut l2_out_d_cpu = Array::new(vec![1, 10], 0.0);
+    let mut loss_out_cpu = Array::new(vec![batch_size, 10], 0.0);
+    let mut l2_out_cpu = Array::new(vec![batch_size, 10], 0.0);
+    let mut l2_out_d_cpu = Array::new(vec![batch_size, 10], 0.0);
 
+    let mut predictions = Array::new(vec![batch_size], 0usize);
     let mut num_correct = 0;
-    let train_update = |graph: &mut Graph, epoch: usize| {
-        l2_out.read(graph, &mut l2_out_cpu);
 
-        // I would do this:
-        //
-        // let prediction = (0..10).max_by_key(|i| l2_out_cpu[&[0, *i]]);
-        //
-        // But f32 does not implement Ord :'(
-        let (mut prediction, mut pred_weight) = (0, l2_out_cpu[&[0, 0]]);
-        for col in 0..10 {
-            let val = l2_out_cpu[&[0, col]];
-            if val > pred_weight {
-                prediction = col;
-                pred_weight = val;
+    {
+        // Put this in it's own scope so that our train_update closure doesn't hold onto all of our
+        // stuff until the end of main()
+        let train_update = |graph: &mut Graph, epoch: usize| {
+            // Get the output
+            l2_out.read(graph, &mut l2_out_cpu);
+
+            // Get the most likely digit (the index of the neuron with the highest output)
+            util::argmax_rows(&l2_out_cpu, &mut predictions);
+            let prediction = predictions[&[0]];
+
+            // Check if the model was correct
+            if prediction == train_labels[epoch] as usize {
+                num_correct += 1;
             }
-        }
 
-        if prediction == train_labels[epoch] as usize {
-            num_correct += 1;
-        }
+            if epoch % 1000 == 999 {
+                l2_out_d.read(graph, &mut l2_out_d_cpu);
+                loss_out.read(graph, &mut loss_out_cpu);
+                println!("===================");
+                println!("Epoch: {}", epoch);
+                println!("out = {:?}", l2_out_cpu);
+                println!("out_d = {:?}", l2_out_d_cpu);
+                println!("loss = {:?}", loss_out_cpu);
+                println!("Accuracy: {}%", (num_correct as f32)/(1000 as f32) * 100.0);
+                num_correct = 0;
+            }
+        };
 
-        if epoch % 1000 == 999 {
-            l2_out_d.read(graph, &mut l2_out_d_cpu);
-            loss_out.read(graph, &mut loss_out_cpu);
-            println!("===================");
-            println!("Epoch: {}", epoch);
-            println!("out = {:?}", l2_out_cpu);
-            println!("out_d = {:?}", l2_out_d_cpu);
-            println!("loss = {:?}", loss_out_cpu);
-            println!("Accuracy: {}%", (num_correct as f32)/(1000 as f32) * 100.0);
-            num_correct = 0;
-        }
-    };
-
-    let trainer = Trainer;
-    trainer.train(graph, 60000, train_update,
-                  &[l2_out],
-                  &[(input, &train_images), (train_out, &train_labels_logits)]);
+        let trainer = Trainer;
+        trainer.train(graph, 60000, train_update,
+                      &[(input, &train_images), (train_out, &train_labels_logits)]);
+    }
 
     /////////////////////////
     // Validate the network
     println!("#######################################");
     println!("Validating");
-    let mut num_correct = 0;
-    for epoch in 0..1000 {
+    num_correct = 0;
+    for epoch in 0..val_images.len() {
         // Upload training data
-        let train_sample = epoch%val_images.len();
-        input.get(graph).set(&ctx, &val_images[train_sample]);
-        train_out.get(graph).set(&ctx, &val_labels_logits[train_sample]);
+        input.write(graph, &val_images[epoch]);
 
+        // Run the graph
         graph.forward();
-        let out = l2_out.get(graph).get(&ctx);
 
-        let (mut prediction, mut pred_weight) = (0, out[&[0, 0]]);
-        for col in 0..10 {
-            let val = out[&[0, col]];
-            if val > pred_weight {
-                prediction = col;
-                pred_weight = val;
-            }
-        }
+        // Get the output
+        l2_out.read(graph, &mut l2_out_cpu);
 
-        if prediction == val_labels[train_sample] as usize {
+        // Get the most likely digit (the index of the neuron with the highest output)
+        util::argmax_rows(&l2_out_cpu, &mut predictions);
+        let prediction = predictions[&[0]];
+
+        // Check if the model was correct
+        if prediction == val_labels[epoch] as usize {
             num_correct += 1;
         }
-
-        if epoch % 1000 == 999 {
-            println!("===================");
-            println!("Epoch: {}", epoch);
-            println!("out = {:?}", out);
-            println!("Accuracy: {}%", (num_correct as f32)/(1000 as f32) * 100.0);
-            num_correct = 0;
-        }
     }
+    println!("Validation Accuracy: {}%", (num_correct as f32)/(val_images.len() as f32) * 100.0);
 }
 
 fn read_mnist_labels<P: AsRef<Path>>(path: P, num_samples: Option<usize>) -> io::Result<Vec<u8>> {
@@ -215,17 +204,6 @@ fn read_mnist_images<P: AsRef<Path>>(path: P, num_samples: Option<usize>)
     }
 
     Ok((rows, columns, images))
-}
-
-fn one_hot<N, M>(label: N, classes: N) -> Array<M>
-    where usize: From<N>,
-          M:     ga::num::Num+Zero+One,
-{
-    let classes: usize = From::from(classes); // Cast class count to usize
-    let label: usize = From::from(label); // Cast label to usize
-    let mut buf: Vec<M> = vec![Zero::zero(); classes]; // Create array of zeroes
-    buf[label] = One::one(); // Set the one-hot component
-    Array::from_vec(vec![1, buf.len()], buf) // Construct the array
 }
 
 fn read_u8<T: Read>(reader: &mut T) -> io::Result<u8> {

@@ -42,4 +42,8 @@ impl VarIndex {
     pub fn read(self, g: &Graph, a: &mut Array<f32>) {
         g.var_store.get(self).read(g.context(), a);
     }
+
+    pub fn write(self, g: &Graph, a: &Array<f32>) {
+        g.var_store.get(self).set(g.context(), a);
+    }
 }
