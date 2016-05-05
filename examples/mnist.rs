@@ -83,15 +83,21 @@ fn main() {
     let train_update = |graph: &mut Graph, epoch: usize| {
         l2_out.read(graph, &mut l2_out_cpu);
 
-        let (mut max_index, mut max_value) = (0, l2_out_cpu[&[0, 0]]);
-        for (i, val) in l2_out_cpu.buffer().iter().enumerate() {
-            if *val > max_value {
-                max_index = i;
-                max_value = *val;
+        // I would do this:
+        //
+        // let prediction = (0..10).max_by_key(|i| l2_out_cpu[&[0, *i]]);
+        //
+        // But f32 does not implement Ord :'(
+        let (mut prediction, mut pred_weight) = (0, l2_out_cpu[&[0, 0]]);
+        for col in 0..10 {
+            let val = l2_out_cpu[&[0, col]];
+            if val > pred_weight {
+                prediction = col;
+                pred_weight = val;
             }
         }
 
-        if max_index == train_labels[epoch] as usize {
+        if prediction == train_labels[epoch] as usize {
             num_correct += 1;
         }
 
@@ -117,7 +123,7 @@ fn main() {
     // Validate the network
     println!("#######################################");
     println!("Validating");
-    let mut correct = 0;
+    let mut num_correct = 0;
     for epoch in 0..1000 {
         // Upload training data
         let train_sample = epoch%val_images.len();
@@ -127,24 +133,25 @@ fn main() {
         graph.forward();
         let out = l2_out.get(graph).get(&ctx);
 
-        let (mut max_index, mut max_value) = (0, out[&[0, 0]]);
-        for (i, val) in out.buffer().iter().enumerate() {
-            if *val > max_value {
-                max_index = i;
-                max_value = *val;
+        let (mut prediction, mut pred_weight) = (0, out[&[0, 0]]);
+        for col in 0..10 {
+            let val = out[&[0, col]];
+            if val > pred_weight {
+                prediction = col;
+                pred_weight = val;
             }
         }
 
-        if max_index == val_labels[train_sample] as usize {
-            correct += 1;
+        if prediction == val_labels[train_sample] as usize {
+            num_correct += 1;
         }
 
         if epoch % 1000 == 999 {
             println!("===================");
             println!("Epoch: {}", epoch);
             println!("out = {:?}", out);
-            println!("Accuracy: {}%", (correct as f32)/(1000 as f32) * 100.0);
-            correct = 0;
+            println!("Accuracy: {}%", (num_correct as f32)/(1000 as f32) * 100.0);
+            num_correct = 0;
         }
     }
 }
