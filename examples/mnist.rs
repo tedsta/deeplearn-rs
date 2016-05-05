@@ -81,7 +81,7 @@ fn main() {
 
     let mut num_correct = 0;
     let train_update = |graph: &mut Graph, epoch: usize| {
-        l2_out.get(graph).read(&ctx, &mut l2_out_cpu);
+        l2_out.read(graph, &mut l2_out_cpu);
 
         let (mut max_index, mut max_value) = (0, l2_out_cpu[&[0, 0]]);
         for (i, val) in l2_out_cpu.buffer().iter().enumerate() {
@@ -96,8 +96,8 @@ fn main() {
         }
 
         if epoch % 1000 == 999 {
-            l2_out_d.get(graph).read(&ctx, &mut l2_out_d_cpu);
-            loss_out.get(graph).read(&ctx, &mut loss_out_cpu);
+            l2_out_d.read(graph, &mut l2_out_d_cpu);
+            loss_out.read(graph, &mut loss_out_cpu);
             println!("===================");
             println!("Epoch: {}", epoch);
             println!("out = {:?}", l2_out_cpu);

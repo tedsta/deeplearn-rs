@@ -2,7 +2,7 @@ use std::cell::Ref;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use ga::{self, Tensor, TensorMode};
+use ga::{self, Array, Tensor, TensorMode};
 use rand;
 
 use super::init::Initializer;
@@ -228,6 +228,10 @@ impl GradIndex {
                 node.get(graph).out_grad[out_index].get().get(graph)
             },
         }
+    }
+
+    pub fn read(&self, g: &Graph, a: &mut Array<f32>) {
+        self.get(g).read(g.context(), a);
     }
 }
 

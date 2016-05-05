@@ -39,11 +39,7 @@ impl VarIndex {
         g.var_store.get(self)
     }
 
-    pub fn get_cpu(self, g: &Graph) -> Array<f32> {
-        g.var_store.get(self).get(g.context())
-    }
-
-    pub fn get_mut<'a>(self, g: &'a mut Graph) -> RefMut<'a, Tensor<f32>> {
-        g.var_store.get_mut(self)
+    pub fn read(self, g: &Graph, a: &mut Array<f32>) {
+        g.var_store.get(self).read(g.context(), a);
     }
 }
