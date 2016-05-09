@@ -146,6 +146,7 @@ fn main() {
 }
 
 fn read_mnist_labels<P: AsRef<Path>>(path: P, num_samples: Option<usize>) -> io::Result<Vec<u8>> {
+    use std::cmp;
     use std::io::{Error, ErrorKind};
 
     let ref mut file = BufReader::new(File::open(path).unwrap());
@@ -157,15 +158,11 @@ fn read_mnist_labels<P: AsRef<Path>>(path: P, num_samples: Option<usize>) -> io:
                                       magic).as_ref()))
     }
 
-    let label_count = u32::from_be(try!(read_u32(file)));
+    let label_count = u32::from_be(try!(read_u32(file))) as usize;
+    let label_count = cmp::min(label_count, num_samples.unwrap_or(label_count));
 
-    let mut labels = Vec::with_capacity(label_count as usize);
-    for i in 0..label_count {
-        if let Some(num_samples) = num_samples {
-            if i as usize > num_samples {
-                break;
-            }
-        }
+    let mut labels = Vec::with_capacity(label_count);
+    for _ in 0..label_count {
         labels.push(try!(read_u8(file)));
     }
 
@@ -174,6 +171,7 @@ fn read_mnist_labels<P: AsRef<Path>>(path: P, num_samples: Option<usize>) -> io:
 
 fn read_mnist_images<P: AsRef<Path>>(path: P, num_samples: Option<usize>)
                                      -> io::Result<(usize, usize, Vec<Array<f32>>)> {
+    use std::cmp;
     use std::io::{Error, ErrorKind};
 
     let ref mut file = BufReader::new(File::open(path).unwrap());
@@ -189,13 +187,10 @@ fn read_mnist_images<P: AsRef<Path>>(path: P, num_samples: Option<usize>)
     let rows = u32::from_be(try!(read_u32(file))) as usize;
     let columns = u32::from_be(try!(read_u32(file))) as usize;
 
+    let image_count = cmp::min(image_count, num_samples.unwrap_or(image_count));
+
     let mut images = Vec::with_capacity(image_count);
-    for i in 0..image_count {
-        if let Some(num_samples) = num_samples {
-            if i as usize > num_samples {
-                break;
-            }
-        }
+    for _ in 0..image_count {
         let mut pixel_buf = vec![0u8; rows*columns];
         try!(file.read_exact(pixel_buf.as_mut()));
         let array = Array::from_vec(vec![rows, columns],
