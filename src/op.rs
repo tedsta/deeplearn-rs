@@ -33,6 +33,11 @@ impl OpBuilder for MatMul {
              -> Result<OpDescriptor<MatMulImpl>, String> {
         let a = &v.get(self.0);
         let b = &v.get(self.1);
+        if a.shape()[1] != b.shape()[0] {
+            return Err(format!("DIM ERROR: Shapes must be of form [I, J] and [J, K]
+                                (got {:?} and {:?}) for MatMul",
+                               a.shape(), b.shape()));
+        }
         Ok(OpDescriptor {
             op: MatMulImpl::new(ctx, a.shape().to_vec(), b.shape().to_vec()),
             inputs: vec![self.0, self.1],
@@ -103,14 +108,14 @@ impl OpBuilder for Add {
             0 => {
                 if b.shape()[0] != 1 || a.shape()[1] != b.shape()[1] {
                     return Err(format!("DIM ERROR: Shapes must be [M, N] and [1, N]
-                                       (got {:?} and {:?}) for Add with broadcast axis of 0",
+                                        (got {:?} and {:?}) for Add with broadcast axis of 0",
                                        a.shape(), b.shape()));
                 }
             },
             1 => {
                 if b.shape()[1] != 1 || a.shape()[0] != b.shape()[0] {
                     return Err(format!("DIM ERROR: Shapes must be [M, N] and [M, 1]
-                                       (got {:?} and {:?}) for Add with broadcast axis of 1",
+                                        (got {:?} and {:?}) for Add with broadcast axis of 1",
                                        a.shape(), b.shape()));
                 }
             },
