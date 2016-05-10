@@ -93,11 +93,33 @@ impl OpBuilder for Add {
              -> Result<OpDescriptor<AddImpl>, String> {
         let a = &v.get(self.0);
         let b = &v.get(self.1);
-        if a.shape() != b.shape() {
-            return Err("DIM ERROR: Shapes must be equal for Add".to_string());
+        let add_axis = self.2;
+        match add_axis {
+            -1 => {
+                if a.shape() != b.shape() {
+                    return Err("DIM ERROR: Shapes must be equal for Add".to_string());
+                }
+            },
+            0 => {
+                if b.shape()[0] != 1 || a.shape()[1] != b.shape()[1] {
+                    return Err(format!("DIM ERROR: Shapes must be [M, N] and [1, N]
+                                       (got {:?} and {:?}) for Add with broadcast axis of 0",
+                                       a.shape(), b.shape()));
+                }
+            },
+            1 => {
+                if b.shape()[1] != 1 || a.shape()[0] != b.shape()[0] {
+                    return Err(format!("DIM ERROR: Shapes must be [M, N] and [M, 1]
+                                       (got {:?} and {:?}) for Add with broadcast axis of 1",
+                                       a.shape(), b.shape()));
+                }
+            },
+            _ => { 
+                return Err(format!("BROADCAST AXIS ERROR: Invalid broadcast axis {}", add_axis));
+            }
         }
         Ok(OpDescriptor {
-            op: AddImpl::new(self.2),
+            op: AddImpl::new(add_axis),
             inputs: vec![self.0, self.1],
             out_shapes: vec![a.shape().to_vec()]
         })

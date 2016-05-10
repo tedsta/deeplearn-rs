@@ -15,16 +15,30 @@ use deeplearn::op::Relu;
 use ga::Array;
 
 fn main() {
+    let batch_size = 5;
+
     // Training data
     println!("Reading training labels...");
     let train_labels = read_mnist_labels("data/mnist/train-labels-idx1-ubyte", None).unwrap();
-    let train_labels_logits: Vec<Array<f32>> = train_labels.iter().cloned()
-                                                           .map(|x| util::one_hot_rows(x, 10))
-                                                           .collect();
     println!("Label count: {}", train_labels.len());
+    /*let train_labels_logits: Vec<Array<f32>> = train_labels.iter().cloned()
+                                                           .map(|x| util::one_hot_rows(x, 10))
+                                                           .collect();*/
+    // Build label batches
+    let train_labels_logits: Vec<Array<f32>> =
+        (0usize..train_labels.len()/batch_size)
+            .map(|i| i*batch_size)
+            .map(|i| util::one_hot_rows_batch(&train_labels[i..i+batch_size], 10))
+            .collect();
 
     println!("Reading training images...");
-    let (rows, columns, train_images) = read_mnist_images("data/mnist/train-images-idx3-ubyte", None).unwrap();
+    let (rows, columns, mut train_images) =
+        read_mnist_images("data/mnist/train-images-idx3-ubyte", batch_size, None).unwrap();
+
+    // Flatten the validation images from [batch_size, rows, columns] to [batch_size, rows*columns]
+    for image in &mut train_images {
+        image.reshape(vec![batch_size, rows*columns]);
+    }
 
     // Validation data
     println!("Reading validation labels...");
@@ -32,7 +46,13 @@ fn main() {
     println!("Label count: {}", val_labels.len());
 
     println!("Reading validation images...");
-    let (_, _, val_images) = read_mnist_images("data/mnist/t10k-images-idx3-ubyte", Some(1000)).unwrap();
+    let (_, _, mut val_images) =
+        read_mnist_images("data/mnist/t10k-images-idx3-ubyte", batch_size, Some(1000)).unwrap();
+
+    // Flatten the training images from [batch_size, rows, columns] to [batch_size, rows*columns]
+    for image in &mut val_images {
+        image.reshape(vec![batch_size, rows*columns]);
+    }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
     // Build the graph
@@ -40,13 +60,11 @@ fn main() {
     let ctx = Rc::new(ga::Context::new());
     let ref mut graph = Graph::new(ctx.clone());
 
-    let batch_size = 1;
-
     //////////////////////////
     // Layer 1
 
     // Input. 1 batch of rows*columns inputs
-    let input = graph.add_variable(vec![batch_size, rows*columns], false, vec![0.0; rows*columns]);
+    let input = graph.add_variable(vec![batch_size, rows*columns], false, 0.0);
 
     // Biased fully connected layer with 300 neurons
     let (l1_fcb, _, _) = layers::dense_biased(graph, input, 300,
@@ -91,13 +109,15 @@ fn main() {
             // Get the output
             l2_out.read(graph, &mut l2_out_cpu);
 
-            // Get the most likely digit (the index of the neuron with the highest output)
-            util::argmax_rows(&l2_out_cpu, &mut predictions);
-            let prediction = predictions[&[0]];
+            for b in 0..batch_size {
+                // Get the most likely digit (the index of the neuron with the highest output)
+                util::argmax_rows(&l2_out_cpu, &mut predictions);
+                let prediction = predictions[&[b]];
 
-            // Check if the model was correct
-            if prediction == train_labels[epoch] as usize {
-                num_correct += 1;
+                // Check if the model was correct
+                if prediction == train_labels[epoch*batch_size + b] as usize {
+                    num_correct += 1;
+                }
             }
 
             if epoch % 1000 == 999 {
@@ -108,13 +128,13 @@ fn main() {
                 println!("out = {:?}", l2_out_cpu);
                 println!("out_d = {:?}", l2_out_d_cpu);
                 println!("loss = {:?}", loss_out_cpu);
-                println!("Accuracy: {}%", (num_correct as f32)/(1000 as f32) * 100.0);
+                println!("Accuracy: {}%", (num_correct as f32)/((batch_size*1000) as f32) * 100.0);
                 num_correct = 0;
             }
         };
 
         let trainer = Trainer;
-        trainer.train(graph, 60000, train_update,
+        trainer.train(graph, train_images.len(), train_update,
                       &[(input, &train_images), (train_out, &train_labels_logits)]);
     }
 
@@ -134,15 +154,17 @@ fn main() {
         l2_out.read(graph, &mut l2_out_cpu);
 
         // Get the most likely digit (the index of the neuron with the highest output)
-        util::argmax_rows(&l2_out_cpu, &mut predictions);
-        let prediction = predictions[&[0]];
+        for b in 0..batch_size {
+            util::argmax_rows(&l2_out_cpu, &mut predictions);
+            let prediction = predictions[&[b]];
 
-        // Check if the model was correct
-        if prediction == val_labels[epoch] as usize {
-            num_correct += 1;
+            // Check if the model was correct
+            if prediction == val_labels[epoch*batch_size + b] as usize {
+                num_correct += 1;
+            }
         }
     }
-    println!("Validation Accuracy: {}%", (num_correct as f32)/(val_images.len() as f32) * 100.0);
+    println!("Validation Accuracy: {}%", (num_correct as f32)/((batch_size*val_images.len()) as f32) * 100.0);
 }
 
 fn read_mnist_labels<P: AsRef<Path>>(path: P, num_samples: Option<usize>) -> io::Result<Vec<u8>> {
@@ -169,7 +191,7 @@ fn read_mnist_labels<P: AsRef<Path>>(path: P, num_samples: Option<usize>) -> io:
     Ok(labels)
 }
 
-fn read_mnist_images<P: AsRef<Path>>(path: P, num_samples: Option<usize>)
+fn read_mnist_images<P: AsRef<Path>>(path: P, batch_size: usize, num_samples: Option<usize>)
                                      -> io::Result<(usize, usize, Vec<Array<f32>>)> {
     use std::cmp;
     use std::io::{Error, ErrorKind};
@@ -190,10 +212,10 @@ fn read_mnist_images<P: AsRef<Path>>(path: P, num_samples: Option<usize>)
     let image_count = cmp::min(image_count, num_samples.unwrap_or(image_count));
 
     let mut images = Vec::with_capacity(image_count);
-    for _ in 0..image_count {
-        let mut pixel_buf = vec![0u8; rows*columns];
+    for _ in 0..image_count/batch_size {
+        let mut pixel_buf = vec![0u8; batch_size*rows*columns];
         try!(file.read_exact(pixel_buf.as_mut()));
-        let array = Array::from_vec(vec![rows, columns],
+        let array = Array::from_vec(vec![batch_size, rows, columns],
                                     pixel_buf.into_iter().map(|x| (x as f32)/255.0).collect());
         images.push(array);
     }
