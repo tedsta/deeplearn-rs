@@ -241,7 +241,7 @@ impl Operation for MseImpl {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Lstm(input, state)
-/*pub struct Lstm(pub VarIndex, pub VarIndex, usize);
+pub struct Lstm(pub VarIndex, pub VarIndex, usize);
 
 impl OpBuilder for Lstm {
     type Op = LstmImpl;
@@ -249,12 +249,12 @@ impl OpBuilder for Lstm {
     fn build(&self, ctx: &ga::Context, v: &VarStore)
              -> Result<OpDescriptor<LstmImpl>, String> {
         let x = &v.get(self.0);
-        let s = &v.get(self.1);
+        let w = &v.get(self.1);
         let seq_len = x.shape()[0];
         let batch_size = x.shape()[1];
         let input_size = x.shape()[2];
         let hidden_size = self.2;
-        if x.shape() != s.shape() {
+        if x.shape() != w.shape() {
             return Err("DIM ERROR: Shapes must be equal for LSTM".to_string());
         }
         Ok(OpDescriptor {
@@ -266,9 +266,14 @@ impl OpBuilder for Lstm {
 }
 
 pub struct LstmImpl {
+    h_in: ga::Tensor<f32>, // Concatonated input and previous output
+    d_h_in: ga::Tensor<f32>,
     ifog: ga::Tensor<f32>, // input, forget, output, gate (IFOG): input sums
+    d_ifog: ga::Tensor<f32>,
     ifog_f: ga::Tensor<f32>, // input, forget, output, gate: activations
+    d_ifog_f: ga::Tensor<f32>,
     c: ga::Tensor<f32>,
+    d_c: ga::Tensor<f32>,
     
     // Recurrent connections from last sequence
     c0: ga::Tensor<f32>,
@@ -290,9 +295,14 @@ impl LstmImpl {
         let b = batch_size;
         let d = hidden_size;
         LstmImpl {
+            h_in: Tensor::new(ctx, vec![n, b, 1 + input_size + d], TensorMode::Mut),
+            d_h_in: Tensor::new(ctx, vec![n, b, 1 + input_size + d], TensorMode::Mut),
             ifog: Tensor::new(ctx, vec![n, b, d*4], TensorMode::Mut),
+            d_ifog: Tensor::new(ctx, vec![n, b, d*4], TensorMode::Mut),
             ifog_f: Tensor::new(ctx, vec![n, b, d*4], TensorMode::Mut),
+            d_ifog_f: Tensor::new(ctx, vec![n, b, d*4], TensorMode::Mut),
             c: Tensor::new(ctx, vec![n, b, d], TensorMode::Mut),
+            d_c: Tensor::new(ctx, vec![n, b, d], TensorMode::Mut),
 
             c0: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
             h0: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
@@ -307,13 +317,14 @@ impl LstmImpl {
 
 impl Operation for LstmImpl {
     fn forward(&mut self, ctx: &ga::Context, v: &VarStore, node: &Node) {
-        let n = self.seq_len;
         let b = self.batch_size;
         let d = self.hidden_size;
-        let i = self.input_size;
+        let input_size = self.input_size;
 
         let x = &v.get(node.inputs[0]); // input
         let wlstm = &v.get(node.inputs[1]); // all of the weights for all the cells
+
+        let ref h_in = self.h_in;
 
         // recurrent connections
         let ref c0 = self.c0;
@@ -323,29 +334,94 @@ impl Operation for LstmImpl {
         let ref ifog_f = self.ifog_f;
         let ref c = self.c;
 
-        let c_f = &v.get(node.outputs[0]); // cell
-        let h = &v.get(node.outputs[1]); // output
+        let h = &v.get(node.outputs[0]); // output
+        let c_f = &v.get(node.outputs[1]); // cell
 
         for t in 0..self.seq_len {
             // Output from last time step
-            let ref prevh = if t > 0 { h.slice(s![t-1]) } else { h0 };
+            let prevh = if t > 0 { h.slice(s![t-1]) } else { h0.slice(s![..]) };
             // Input
-            ga::fill(h_in.slice(s![t, .., 0]), 1.0); // bias
-            ga::copy_slice(ctx, x.slice(s![t]), h_in.slice(s![t, .., 1..i+1]));
-            ga::copy_slice(ctx, prevh, h_in.slice(s![t, .., i+1..]));
+            ga::fill_slice(ctx, &h_in.slice(s![t, .., 0]), 1.0); // bias
+            ga::copy_to_slice(ctx, &x.slice(s![t]), &h_in.slice(s![t, .., 1..input_size+1]));
+            ga::copy_to_slice(ctx, &prevh, &h_in.slice(s![t, .., input_size+1..]));
             // Multiply inputs and weights, and add biases; all in one dot product!
-            ga::matmul(ctx, h_in, wlstm, ifog.slice(s![t]));
+            //ga::matmul_slice(ctx, &h_in.slice(s![t]), &wlstm.slice(s![..]), &ifog.slice(s![t]));
             // Compute internal activations
-            ga::sigmoid(ctx, ifog.slice(s![t, .., ..3*d]), ifog_f.slice(s![t, .., ..3*d])); // sigmoids; these are the gates
-            ga::tanh(ctx, ifog.slice(s![t, .., 3*d..]), ifog_f.slice(s![t, .., 3*d..])); // tanh
+            ga::sigmoid_slice(ctx, &ifog.slice(s![t, .., ..3*d]), &ifog_f.slice(s![t, .., ..3*d])); // sigmoids; these are the gates
+            ga::tanh_slice(ctx, &ifog.slice(s![t, .., 3*d..]), &ifog_f.slice(s![t, .., 3*d..])); // tanh
             // compute the LSTM cell activation
-            let ref prevc = if t > 0 { c.slice(s![t-1]) } else { c0 };
-            c.slice(s![t]) = ifog_f.slice(s![t, .., ..d]) * ifog_f.slice(s![t, .., 3*d..]) + ifog_f.slice(s![t, .., d..2*d]) * prevc
-            ga::tanh(ctx, c.slice(s![t]), c_f.slice(s![t]));
-            ga::multiply(ctx, ifog_f.slice(s![t, .., 2*d..3*d]), c_f.slice(s![t]), h.slice(s![t]));
+            let prevc = if t > 0 { c.slice(s![t-1]) } else { c0.slice(s![..]) };
+            //c.slice(s![t]) = ifog_f.slice(s![t, .., ..d]) * ifog_f.slice(s![t, .., 3*d..]) + ifog_f.slice(s![t, .., d..2*d]) * prevc
+            ga::tanh_slice(ctx, &c.slice(s![t]), &c_f.slice(s![t]));
+            ga::multiply_slice(ctx, &ifog_f.slice(s![t, .., 2*d..3*d]), &c_f.slice(s![t]), &h.slice(s![t]));
         }
     }
 
-    fn backward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
+    fn backward(&mut self, ctx: &ga::Context, v: &VarStore, node: &Node) {
+        let dHout_in = &v.get(node.out_grad[0].get());
+
+        let x = &v.get(node.inputs[0]); // input
+        let wlstm = &v.get(node.inputs[1]); // all of the weights for all the cells
+
+        let ref h_in = self.h_in;
+
+        // recurrent connections
+        let ref c0 = self.c0;
+        let ref h0 = self.h0;
+
+        let ref ifog = self.ifog;
+        let ref d_ifog = self.d_ifog;
+        let ref ifog_f = self.ifog_f;
+        let ref d_ifog_f = self.d_ifog_f;
+        let ref c = self.c;
+        let ref d_c = self.d_c;
+
+        let h = &v.get(node.outputs[0]); // output
+        let c_f = &v.get(node.outputs[1]); // cell
+
+        /*dIFOG = np.zeros(IFOG.shape)
+        dIFOGf = np.zeros(IFOGf.shape)
+        dWLSTM = np.zeros(WLSTM.shape)
+        dHin = np.zeros(Hin.shape)
+        dC = np.zeros(C.shape)
+        dX = np.zeros((n,b,input_size))
+        dh0 = np.zeros((b, d))
+        dc0 = np.zeros((b, d))
+        dHout = dHout_in.copy() // make a copy so we don't have any funny side effects
+        if dcn != None { dC[n-1] += dcn.copy() } // carry over gradients from later
+        if dhn != None { dHout[n-1] += dhn.copy() }
+        for t in reversed(xrange(n)) {
+            tanhCt = Ct[t]
+            dIFOGf[t,:,2*d:3*d] = tanhCt * dHout[t]
+            // backprop tanh non-linearity first then continue backprop
+            dC[t] += (1-tanhCt**2) * (IFOGf[t,:,2*d:3*d] * dHout[t])
+
+            if t > 0 {
+                dIFOGf[t,:,d:2*d] = C[t-1] * dC[t]
+                dC[t-1] += IFOGf[t,:,d:2*d] * dC[t]
+            } else {
+                dIFOGf[t,:,d:2*d] = c0 * dC[t]
+                dc0 = IFOGf[t,:,d:2*d] * dC[t]
+            }
+            dIFOGf[t,:,:d] = IFOGf[t,:,3*d:] * dC[t]
+            dIFOGf[t,:,3*d:] = IFOGf[t,:,:d] * dC[t]
+
+            // backprop activation functions
+            dIFOG[t,:,3*d:] = (1 - IFOGf[t,:,3*d:] ** 2) * dIFOGf[t,:,3*d:]
+            y = IFOGf[t,:,:3*d]
+            dIFOG[t,:,:3*d] = (y*(1.0-y)) * dIFOGf[t,:,:3*d]
+
+            // backprop matrix multiply
+            dWLSTM += np.dot(Hin[t].transpose(), dIFOG[t])
+            dHin[t] = dIFOG[t].dot(WLSTM.transpose())
+
+            // backprop the identity transforms into Hin
+            dX[t] = dHin[t,:,1:input_size+1]
+            if t > 0 {
+                dHout[t-1,:] += dHin[t,:,input_size+1:]
+            } else {
+                dh0 += dHin[t,:,input_size+1:]
+            }
+        }*/
     }
-}*/
+}
