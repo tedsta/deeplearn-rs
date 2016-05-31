@@ -54,7 +54,7 @@ impl Graph {
     pub fn add_node<T: OpBuilder>(&mut self, op: T) -> NodeIndex {
         let node_index = NodeIndex(self.nodes.len());
 
-        let OpDescriptor { op, inputs, out_shapes } = op.build(&self.ctx, &self.var_store).unwrap();
+        let OpDescriptor { op, inputs: node_inputs, out_shapes } = op.build(&self.ctx, &self.var_store).unwrap();
 
         // Create output variables
         let mut outputs = vec![];
@@ -63,26 +63,29 @@ impl Graph {
             outputs.push(var_index);
             self.out_var_map.insert(var_index, (node_index, i));
         }
-        // Convert array of NodeInputs to VarIndexes
-        let inputs: Vec<VarIndex> =
-            inputs.into_iter().map(|input| {
-                match input {
-                    NodeInput::Var(v) => v,
-                    NodeInput::Recurrent(out) => outputs[out],
-                }
-            }).collect();
-        // Create gradients on input variables
+        let mut out_grad = vec![OutGrad::new(); outputs.len()];
+        // Set up inputs and gradients on inputs
+        let mut inputs = vec![];
         let mut in_grad = vec![];
-        for input in &inputs {
-            let gradient = self.add_gradient(*input);
+        for input in node_inputs {
+            let (v, gradient) =
+                match input {
+                    NodeInput::Var(v) => (v, self.add_gradient(v)),
+                    NodeInput::Recurrent(out) => {
+                        let v = outputs[out];
+                        let gradient = Self::create_gradient(&self.ctx, &mut self.var_store, v,
+                                                             &mut out_grad[out]);
+                        (v, gradient)
+                    }
+                };
+            inputs.push(v);
             in_grad.push(gradient);
         }
         // Create the node
-        let num_outputs = outputs.len();
         self.nodes.push(Node { inputs: inputs,
                                outputs: outputs,
                                in_grad: in_grad,
-                               out_grad: vec![OutGrad::new(); num_outputs] });
+                               out_grad: out_grad });
         // Add the corresponding node op
         self.node_ops.push(Box::new(op));
         node_index
@@ -118,22 +121,34 @@ impl Graph {
     }
 
     pub fn add_gradient(&mut self, v: VarIndex) -> VarIndex {
-        let shape = v.get(self).shape().to_owned();
-        let gradient = self.var_store.add(Tensor::new(&self.ctx, shape, TensorMode::Mut));
         match self.out_var_map.get(&v).map(|x| *x) {
             Some((node, out_index)) => {
                 // v is the output of a node
-                self.nodes[node.0].out_grad[out_index]
-                                  .fork(&self.ctx, &mut self.var_store, gradient);
+                /*self.nodes[node.0].out_grad[out_index]
+                                  .fork(&self.ctx, &mut self.var_store, gradient);*/
+                Self::create_gradient(&self.ctx, &mut self.var_store, v,
+                                      &mut self.nodes[node.0].out_grad[out_index])
             },
             None => {
                 // v is an input to the graph - it has no corresponding node
                 let in_grad_index = *self.in_var_map.get(&v)
                                          .expect("Variable is neither input nor output. Nonsense!");
-                self.in_grad[in_grad_index]
-                    .fork(&self.ctx, &mut self.var_store, gradient);
+                /*self.in_grad[in_grad_index]
+                    .fork(&self.ctx, &mut self.var_store, gradient);*/
+                Self::create_gradient(&self.ctx, &mut self.var_store, v,
+                                      &mut self.in_grad[in_grad_index])
             },
         }
+    }
+
+    fn create_gradient(ctx: &ga::Context,
+                       var_store: &mut VarStore,
+                       v: VarIndex,
+                       out_grad: &mut OutGrad)
+                       -> VarIndex {
+        let shape = var_store.get(v).shape().to_owned();
+        let gradient = var_store.add(Tensor::new(ctx, shape, TensorMode::Mut));
+        out_grad.fork(ctx, var_store, gradient);
         gradient
     }
 
