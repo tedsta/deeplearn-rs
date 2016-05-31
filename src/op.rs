@@ -253,9 +253,9 @@ impl OpBuilder for Lstm {
         let batch_size = x.shape()[0];
         let input_size = x.shape()[1];
         let hidden_size = self.2;
-        if w.shape()[0] != 1+input_size+hidden_size || w.shape()[1] != hidden_size {
+        if w.shape()[0] != 1+input_size+hidden_size || w.shape()[1] != 4*hidden_size {
             return Err(format!("DIM ERROR: LSTM expects weight matrix shape of
-                                [1+input_size+hidden_size, hidden_size], got {:?}",
+                                [1+input_size+hidden_size, 4*hidden_size], got {:?}",
                                w.shape()));
         }
         Ok(OpDescriptor {
@@ -307,8 +307,8 @@ impl LstmImpl {
             c_f: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
             d_c_f: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
 
-            h_in_t: Tensor::new(ctx, vec![1+input_size+d, d], TensorMode::Mut),
-            wlstm_t: Tensor::new(ctx, vec![b, 1+input_size+d], TensorMode::Mut),
+            h_in_t: Tensor::new(ctx, vec![1+input_size+d, b], TensorMode::Mut),
+            wlstm_t: Tensor::new(ctx, vec![4*d, 1+input_size+d], TensorMode::Mut),
 
             input_size: input_size,
             hidden_size: hidden_size,
@@ -338,16 +338,18 @@ impl Operation for LstmImpl {
         // Input
         ga::copy_to_slice(ctx, &x.slice(s![..]), &h_in.slice(s![.., 1..input_size+1]));
         ga::copy_to_slice(ctx, &prev_h.slice(s![..]), &h_in.slice(s![.., input_size+1..]));
-        // Multiply inputs and weights, and add biases; all in one dot product!
+        // Multiply inputs and weights, and add biases - all in one dot product!
         ga::matmul(ctx, &h_in, &wlstm, &ifog);
         // Compute internal activations
         ga::sigmoid_slice(ctx, &ifog.slice(s![.., ..3*d]), &ifog_f.slice(s![.., ..3*d])); // sigmoids
         ga::tanh_slice(ctx, &ifog.slice(s![.., 3*d..]), &ifog_f.slice(s![.., 3*d..])); // tanh
         // compute the LSTM cell activation
-        ga::multiply_slice(ctx, &ifog_f.slice(s![.., ..d]), &ifog_f.slice(s![.., 3*d..]), &c.slice(s![..]));
+        // NOTE: we're using c_f as a temporary buffer here - we overwrite it later anyway
+        // c[t] = ifog_f[t, .., ..d]*ifog_f[t, .., 3*d..] + ifog_f[t, .., d..2*d]*c[t-1]
         ga::multiply_slice(ctx, &ifog_f.slice(s![.., d..2*d]), &prev_c.slice(s![..]), &c_f.slice(s![..]));
+        ga::multiply_slice(ctx, &ifog_f.slice(s![.., ..d]), &ifog_f.slice(s![.., 3*d..]), &c.slice(s![..]));
         ga::add(ctx, c, -1, c_f, c);
-        //c.slice(s![t]) = ifog_f.slice(s![.., ..d]) * ifog_f.slice(s![.., 3*d..]) + ifog_f.slice(s![.., d..2*d]) * prev_c
+        // c_f[t] = tanh(c[t])
         ga::tanh(ctx, &c, &c_f);
         ga::multiply_slice(ctx, &ifog_f.slice(s![.., 2*d..3*d]), &c_f.slice(s![..]), &h.slice(s![..]));
     }
@@ -393,11 +395,11 @@ impl Operation for LstmImpl {
         ga::multiply_slice(ctx, &c_f.slice(s![..]), &d_h.slice(s![..]), &d_ifog_f.slice(s![.., 2*d..3*d]));
         // backprop tanh non-linearity first then continue backprop
         //dC[t] += (1-tanhCt**2) * (IFOGf[t,:,2*d:3*d] * dHout[t])
-        ga::dtanh(ctx, &c, &d_c_inner);
+        ga::dtanh(ctx, c, d_c_inner);
         // XXX
         ga::multiply_slice(ctx, &ifog_f.slice(s![.., 2*d..3*d]), &d_h.slice(s![..]), &d_c_f.slice(s![..]));
-        ga::multiply(ctx, &d_c_f, -1, &d_c_inner, &d_c_inner);
-        ga::add(ctx, &d_c, -1, &d_c_inner, &d_c_inner);
+        ga::multiply(ctx, d_c_f, -1, d_c_inner, d_c_inner);
+        ga::add(ctx, d_c, -1, d_c_inner, d_c_inner);
 
         //dIFOGf[t,:,d:2*d] = C[t-1] * dC[t]
         ga::multiply_slice(ctx, &prev_c.slice(s![..]), &d_c_inner.slice(s![..]), &d_ifog_f.slice(s![.., d..2*d]));
