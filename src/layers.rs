@@ -1,6 +1,6 @@
 use graph::Graph;
 use init::Initializer;
-use op::{Add, MatMul, Mse, OpBuilder};
+use op::{Add, Lstm, MatMul, Mse, OpBuilder};
 use var_store::VarIndex;
 
 pub fn dense<WI: Initializer>(graph: &mut Graph,
@@ -54,6 +54,24 @@ pub fn activation<A: OpBuilder>(graph: &mut Graph, op: A) -> VarIndex {
     let activation_out = activation.get(&graph).outputs[0];
 
     activation_out
+}
+
+pub fn lstm<WI: Initializer>(graph: &mut Graph,
+                             input: VarIndex,
+                             layer_size: usize,
+                             w_init: WI)
+                             -> (VarIndex, VarIndex) {
+    // Input shape is [batch_size, input_size]
+    let input_size = input.get(graph).shape()[1];
+
+    // Weights for layer 1: [1+input_size+layer_size, 4*layer_size]
+    let weights = graph.add_variable(vec![1+input_size+layer_size, 4*layer_size], true, w_init);
+
+    // Use matrix multiplication to do a fully connected layer
+    let lstm = graph.add_node(Lstm(input, weights, layer_size));
+    let lstm_out = lstm.get(&graph).outputs[0]; 
+
+    (lstm_out, weights)
 }
 
 pub fn mse(graph: &mut Graph, out: VarIndex) -> (VarIndex, VarIndex) {

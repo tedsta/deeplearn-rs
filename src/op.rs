@@ -241,7 +241,7 @@ impl Operation for MseImpl {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Lstm(input, state)
-pub struct Lstm(pub VarIndex, pub VarIndex, usize);
+pub struct Lstm(pub VarIndex, pub VarIndex, pub usize);
 
 impl OpBuilder for Lstm {
     type Op = LstmImpl;
