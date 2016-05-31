@@ -250,17 +250,18 @@ impl OpBuilder for Lstm {
              -> Result<OpDescriptor<LstmImpl>, String> {
         let x = &v.get(self.0);
         let w = &v.get(self.1);
-        let seq_len = x.shape()[0];
-        let batch_size = x.shape()[1];
-        let input_size = x.shape()[2];
+        let batch_size = x.shape()[0];
+        let input_size = x.shape()[1];
         let hidden_size = self.2;
-        if x.shape() != w.shape() {
-            return Err("DIM ERROR: Shapes must be equal for LSTM".to_string());
+        if w.shape()[0] != 1+input_size+hidden_size || w.shape()[1] != hidden_size {
+            return Err(format!("DIM ERROR: LSTM expects weight matrix shape of
+                                [1+input_size+hidden_size, hidden_size], got {:?}",
+                               w.shape()));
         }
         Ok(OpDescriptor {
-            op: LstmImpl::new(ctx, seq_len, batch_size, input_size, hidden_size),
+            op: LstmImpl::new(ctx, batch_size, input_size, hidden_size),
             inputs: vec![self.0, self.1],
-            out_shapes: vec![x.shape().to_vec()],
+            out_shapes: vec![vec![batch_size, hidden_size], vec![batch_size, hidden_size]],
         })
     }
 }
@@ -272,43 +273,43 @@ pub struct LstmImpl {
     d_ifog: ga::Tensor<f32>,
     ifog_f: ga::Tensor<f32>, // input, forget, output, gate: activations
     d_ifog_f: ga::Tensor<f32>,
-    c: ga::Tensor<f32>,
-    d_c: ga::Tensor<f32>,
-    
-    // Recurrent connections from last sequence
-    c0: ga::Tensor<f32>,
-    h0: ga::Tensor<f32>,
+    d_c_inner: ga::Tensor<f32>,
+    c_f: ga::Tensor<f32>, // tanh of C
+    d_c_f: ga::Tensor<f32>,
 
-    seq_len: usize,
-    batch_size: usize,
+    h_in_t: ga::Tensor<f32>,
+    wlstm_t: ga::Tensor<f32>,
+
     input_size: usize,
     hidden_size: usize,
 }
 
 impl LstmImpl {
     fn new(ctx: &ga::Context,
-           seq_len: usize,
            batch_size: usize,
            input_size: usize,
            hidden_size: usize) -> Self {
-        let n = seq_len;
         let b = batch_size;
         let d = hidden_size;
+
+        let h_in = Tensor::new(ctx, vec![b, 1 + input_size + d], TensorMode::Mut);
+        // Fill first column of h_in with 1's to be multiplied by the biases in the weights matrix
+        ga::fill_slice(ctx, &h_in.slice(s![.., 0]), 1.0);
+
         LstmImpl {
-            h_in: Tensor::new(ctx, vec![n, b, 1 + input_size + d], TensorMode::Mut),
-            d_h_in: Tensor::new(ctx, vec![n, b, 1 + input_size + d], TensorMode::Mut),
-            ifog: Tensor::new(ctx, vec![n, b, d*4], TensorMode::Mut),
-            d_ifog: Tensor::new(ctx, vec![n, b, d*4], TensorMode::Mut),
-            ifog_f: Tensor::new(ctx, vec![n, b, d*4], TensorMode::Mut),
-            d_ifog_f: Tensor::new(ctx, vec![n, b, d*4], TensorMode::Mut),
-            c: Tensor::new(ctx, vec![n, b, d], TensorMode::Mut),
-            d_c: Tensor::new(ctx, vec![n, b, d], TensorMode::Mut),
+            h_in: h_in,
+            d_h_in: Tensor::new(ctx, vec![b, 1 + input_size + d], TensorMode::Mut),
+            ifog: Tensor::new(ctx, vec![b, d*4], TensorMode::Mut),
+            d_ifog: Tensor::new(ctx, vec![b, d*4], TensorMode::Mut),
+            ifog_f: Tensor::new(ctx, vec![b, d*4], TensorMode::Mut),
+            d_ifog_f: Tensor::new(ctx, vec![b, d*4], TensorMode::Mut),
+            d_c_inner: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
+            c_f: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
+            d_c_f: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
 
-            c0: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
-            h0: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
+            h_in_t: Tensor::new(ctx, vec![1+input_size+d, d], TensorMode::Mut),
+            wlstm_t: Tensor::new(ctx, vec![b, 1+input_size+d], TensorMode::Mut),
 
-            seq_len: seq_len,
-            batch_size: batch_size,
             input_size: input_size,
             hidden_size: hidden_size,
         }
@@ -317,111 +318,122 @@ impl LstmImpl {
 
 impl Operation for LstmImpl {
     fn forward(&mut self, ctx: &ga::Context, v: &VarStore, node: &Node) {
-        let b = self.batch_size;
         let d = self.hidden_size;
         let input_size = self.input_size;
 
         let x = &v.get(node.inputs[0]); // input
         let wlstm = &v.get(node.inputs[1]); // all of the weights for all the cells
+        let prev_h = &v.get(node.inputs[2]); // Output from last timestep
+        let prev_c = &v.get(node.inputs[3]); // C from last timestep
 
         let ref h_in = self.h_in;
 
-        // recurrent connections
-        let ref c0 = self.c0;
-        let ref h0 = self.h0;
-
         let ref ifog = self.ifog;
         let ref ifog_f = self.ifog_f;
-        let ref c = self.c;
+        let ref c_f = self.c_f;
 
         let h = &v.get(node.outputs[0]); // output
-        let c_f = &v.get(node.outputs[1]); // cell
+        let c = &v.get(node.outputs[1]); // cell
 
-        for t in 0..self.seq_len {
-            // Output from last time step
-            let prevh = if t > 0 { h.slice(s![t-1]) } else { h0.slice(s![..]) };
-            // Input
-            ga::fill_slice(ctx, &h_in.slice(s![t, .., 0]), 1.0); // bias
-            ga::copy_to_slice(ctx, &x.slice(s![t]), &h_in.slice(s![t, .., 1..input_size+1]));
-            ga::copy_to_slice(ctx, &prevh, &h_in.slice(s![t, .., input_size+1..]));
-            // Multiply inputs and weights, and add biases; all in one dot product!
-            //ga::matmul_slice(ctx, &h_in.slice(s![t]), &wlstm.slice(s![..]), &ifog.slice(s![t]));
-            // Compute internal activations
-            ga::sigmoid_slice(ctx, &ifog.slice(s![t, .., ..3*d]), &ifog_f.slice(s![t, .., ..3*d])); // sigmoids; these are the gates
-            ga::tanh_slice(ctx, &ifog.slice(s![t, .., 3*d..]), &ifog_f.slice(s![t, .., 3*d..])); // tanh
-            // compute the LSTM cell activation
-            let prevc = if t > 0 { c.slice(s![t-1]) } else { c0.slice(s![..]) };
-            //c.slice(s![t]) = ifog_f.slice(s![t, .., ..d]) * ifog_f.slice(s![t, .., 3*d..]) + ifog_f.slice(s![t, .., d..2*d]) * prevc
-            ga::tanh_slice(ctx, &c.slice(s![t]), &c_f.slice(s![t]));
-            ga::multiply_slice(ctx, &ifog_f.slice(s![t, .., 2*d..3*d]), &c_f.slice(s![t]), &h.slice(s![t]));
-        }
+        // Input
+        ga::copy_to_slice(ctx, &x.slice(s![..]), &h_in.slice(s![.., 1..input_size+1]));
+        ga::copy_to_slice(ctx, &prev_h.slice(s![..]), &h_in.slice(s![.., input_size+1..]));
+        // Multiply inputs and weights, and add biases; all in one dot product!
+        ga::matmul(ctx, &h_in, &wlstm, &ifog);
+        // Compute internal activations
+        ga::sigmoid_slice(ctx, &ifog.slice(s![.., ..3*d]), &ifog_f.slice(s![.., ..3*d])); // sigmoids
+        ga::tanh_slice(ctx, &ifog.slice(s![.., 3*d..]), &ifog_f.slice(s![.., 3*d..])); // tanh
+        // compute the LSTM cell activation
+        ga::multiply_slice(ctx, &ifog_f.slice(s![.., ..d]), &ifog_f.slice(s![.., 3*d..]), &c.slice(s![..]));
+        ga::multiply_slice(ctx, &ifog_f.slice(s![.., d..2*d]), &prev_c.slice(s![..]), &c_f.slice(s![..]));
+        ga::add(ctx, c, -1, c_f, c);
+        //c.slice(s![t]) = ifog_f.slice(s![.., ..d]) * ifog_f.slice(s![.., 3*d..]) + ifog_f.slice(s![.., d..2*d]) * prev_c
+        ga::tanh(ctx, &c, &c_f);
+        ga::multiply_slice(ctx, &ifog_f.slice(s![.., 2*d..3*d]), &c_f.slice(s![..]), &h.slice(s![..]));
     }
 
     fn backward(&mut self, ctx: &ga::Context, v: &VarStore, node: &Node) {
-        let dHout_in = &v.get(node.out_grad[0].get());
+        let d = self.hidden_size;
+        let input_size = self.input_size;
 
-        let x = &v.get(node.inputs[0]); // input
         let wlstm = &v.get(node.inputs[1]); // all of the weights for all the cells
+        let prev_c = &v.get(node.inputs[3]); // C from last timestep
+
+        let d_x = &v.get(node.in_grad[0]);
+        let d_wlstm = &v.get(node.in_grad[1]);
+        let d_prev_h = &v.get(node.in_grad[2]);
+        let d_prev_c = &v.get(node.in_grad[3]);
 
         let ref h_in = self.h_in;
+        let ref d_h_in = self.d_h_in;
 
-        // recurrent connections
-        let ref c0 = self.c0;
-        let ref h0 = self.h0;
+        let ref h_in_t = self.h_in_t;
+        let ref wlstm_t = self.wlstm_t;
 
-        let ref ifog = self.ifog;
         let ref d_ifog = self.d_ifog;
         let ref ifog_f = self.ifog_f;
         let ref d_ifog_f = self.d_ifog_f;
-        let ref c = self.c;
-        let ref d_c = self.d_c;
+        let ref d_c_inner = self.d_c_inner;
+        let ref c_f = self.c_f;
+        let ref d_c_f = self.d_c_f;
 
-        let h = &v.get(node.outputs[0]); // output
-        let c_f = &v.get(node.outputs[1]); // cell
+        let c = &v.get(node.outputs[1]); // cell
 
-        /*dIFOG = np.zeros(IFOG.shape)
-        dIFOGf = np.zeros(IFOGf.shape)
-        dWLSTM = np.zeros(WLSTM.shape)
-        dHin = np.zeros(Hin.shape)
-        dC = np.zeros(C.shape)
-        dX = np.zeros((n,b,input_size))
-        dh0 = np.zeros((b, d))
-        dc0 = np.zeros((b, d))
-        dHout = dHout_in.copy() // make a copy so we don't have any funny side effects
-        if dcn != None { dC[n-1] += dcn.copy() } // carry over gradients from later
-        if dhn != None { dHout[n-1] += dhn.copy() }
-        for t in reversed(xrange(n)) {
-            tanhCt = Ct[t]
-            dIFOGf[t,:,2*d:3*d] = tanhCt * dHout[t]
-            // backprop tanh non-linearity first then continue backprop
-            dC[t] += (1-tanhCt**2) * (IFOGf[t,:,2*d:3*d] * dHout[t])
+        let d_h = &v.get(node.out_grad[0].get());
+        let d_c = &v.get(node.out_grad[1].get());
 
-            if t > 0 {
-                dIFOGf[t,:,d:2*d] = C[t-1] * dC[t]
-                dC[t-1] += IFOGf[t,:,d:2*d] * dC[t]
-            } else {
-                dIFOGf[t,:,d:2*d] = c0 * dC[t]
-                dc0 = IFOGf[t,:,d:2*d] * dC[t]
-            }
-            dIFOGf[t,:,:d] = IFOGf[t,:,3*d:] * dC[t]
-            dIFOGf[t,:,3*d:] = IFOGf[t,:,:d] * dC[t]
+        // NOTE: d_c and d_prev_c are actually the same underlying buffer. We use different aliases
+        // for clarity.
+        // NOTE: d_h and d_prev_h are actually the same underlying buffer. We use different aliases
+        // for clarity.
 
-            // backprop activation functions
-            dIFOG[t,:,3*d:] = (1 - IFOGf[t,:,3*d:] ** 2) * dIFOGf[t,:,3*d:]
-            y = IFOGf[t,:,:3*d]
-            dIFOG[t,:,:3*d] = (y*(1.0-y)) * dIFOGf[t,:,:3*d]
+        //tanhCt = Ct[t]
+        //dIFOGf[t,:,2*d:3*d] = tanhCt * dHout[t]
+        // XXX
+        ga::multiply_slice(ctx, &c_f.slice(s![..]), &d_h.slice(s![..]), &d_ifog_f.slice(s![.., 2*d..3*d]));
+        // backprop tanh non-linearity first then continue backprop
+        //dC[t] += (1-tanhCt**2) * (IFOGf[t,:,2*d:3*d] * dHout[t])
+        ga::dtanh(ctx, &c, &d_c_inner);
+        // XXX
+        ga::multiply_slice(ctx, &ifog_f.slice(s![.., 2*d..3*d]), &d_h.slice(s![..]), &d_c_f.slice(s![..]));
+        ga::multiply(ctx, &d_c_f, -1, &d_c_inner, &d_c_inner);
+        ga::add(ctx, &d_c, -1, &d_c_inner, &d_c_inner);
 
-            // backprop matrix multiply
-            dWLSTM += np.dot(Hin[t].transpose(), dIFOG[t])
-            dHin[t] = dIFOG[t].dot(WLSTM.transpose())
+        //dIFOGf[t,:,d:2*d] = C[t-1] * dC[t]
+        ga::multiply_slice(ctx, &prev_c.slice(s![..]), &d_c_inner.slice(s![..]), &d_ifog_f.slice(s![.., d..2*d]));
+        //dC[t-1] += IFOGf[t,:,d:2*d] * dC[t]
+        ga::multiply_slice(ctx, &ifog_f.slice(s![.., d..2*d]), &d_c_inner.slice(s![..]), &d_prev_c.slice(s![..]));
 
-            // backprop the identity transforms into Hin
-            dX[t] = dHin[t,:,1:input_size+1]
-            if t > 0 {
-                dHout[t-1,:] += dHin[t,:,input_size+1:]
-            } else {
-                dh0 += dHin[t,:,input_size+1:]
-            }
-        }*/
+        //dIFOGf[t,:,:d] = IFOGf[t,:,3*d:] * dC[t]
+        ga::multiply_slice(ctx, &ifog_f.slice(s![.., 3*d..]), &d_c_inner.slice(s![..]), &d_ifog_f.slice(s![.., ..d]));
+        //dIFOGf[t,:,3*d:] = IFOGf[t,:,:d] * dC[t]
+        ga::multiply_slice(ctx, &ifog_f.slice(s![.., ..d]), &d_c_inner.slice(s![..]), &d_ifog_f.slice(s![.., 3*d..]));
+
+        // backprop activation functions
+        //dIFOG[t,:,3*d:] = (1 - IFOGf[t,:,3*d:] ** 2) * dIFOGf[t,:,3*d:]
+        ga::dtanh_slice(ctx, &ifog_f.slice(s![.., 3*d..]), &d_ifog.slice(s![.., 3*d..]));
+        ga::multiply_slice(ctx, &d_ifog.slice(s![.., 3*d..]), &d_ifog_f.slice(s![.., 3*d..]), &d_ifog.slice(s![.., 3*d..]));
+        //y = IFOGf[t,:,:3*d]
+        //dIFOG[t,:,:3*d] = (y*(1.0-y)) * dIFOGf[t,:,:3*d]
+        ga::dsigmoid_slice(ctx, &ifog_f.slice(s![.., ..3*d]), &d_ifog.slice(s![.., ..3*d]));
+        ga::multiply_slice(ctx, &d_ifog.slice(s![.., ..3*d]), &d_ifog_f.slice(s![.., ..3*d]), &d_ifog.slice(s![.., ..3*d]));
+
+        // backprop matrix multiply
+        //dWLSTM += np.dot(Hin[t].transpose(), dIFOG[t])
+
+        ga::transpose(ctx, h_in, h_in_t);
+        ga::matmul(ctx, h_in_t, d_ifog, d_wlstm);
+
+        //dHin[t] = dIFOG[t].dot(WLSTM.transpose())
+
+        ga::transpose(ctx, wlstm, wlstm_t);
+        ga::matmul(ctx, d_ifog, wlstm_t, d_h_in);
+
+        // backprop the identity transforms into Hin
+        //dX[t] = dHin[t,:,1:input_size+1]
+        ga::copy_to_slice(ctx, &d_h_in.slice(s![.., 1..input_size+1]), &d_x.slice(s![..]));
+        //dHout[t-1,:] += dHin[t,:,input_size+1:]
+        // XXX
+        ga::copy_to_slice(ctx, &d_h_in.slice(s![.., input_size+1..]), &d_prev_h.slice(s![..]));
     }
 }
