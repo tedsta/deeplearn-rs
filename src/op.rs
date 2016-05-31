@@ -1,7 +1,7 @@
 use ga::{self, Tensor};
 use ga::tensor::TensorMode;
 
-use super::graph::Node;
+use super::graph::{Node, NodeInput};
 use super::var_store::{VarIndex, VarStore};
 
 pub trait Operation : 'static {
@@ -18,7 +18,7 @@ pub trait OpBuilder {
 
 pub struct OpDescriptor<T: Operation> {
     pub op: T,
-    pub inputs: Vec<VarIndex>,
+    pub inputs: Vec<NodeInput>,
     pub out_shapes: Vec<Vec<usize>>,
 }
 
@@ -40,7 +40,7 @@ impl OpBuilder for MatMul {
         }
         Ok(OpDescriptor {
             op: MatMulImpl::new(ctx, a.shape().to_vec(), b.shape().to_vec()),
-            inputs: vec![self.0, self.1],
+            inputs: vec![NodeInput::Var(self.0), NodeInput::Var(self.1)],
             out_shapes: vec![vec![a.shape()[0], b.shape()[1]]],
         })
     }
@@ -125,7 +125,7 @@ impl OpBuilder for Add {
         }
         Ok(OpDescriptor {
             op: AddImpl::new(add_axis),
-            inputs: vec![self.0, self.1],
+            inputs: vec![NodeInput::Var(self.0), NodeInput::Var(self.1)],
             out_shapes: vec![a.shape().to_vec()]
         })
     }
@@ -172,7 +172,7 @@ impl OpBuilder for Relu {
         let a = &v.get(self.0);
         Ok(OpDescriptor {
             op: ReluImpl,
-            inputs: vec![self.0],
+            inputs: vec![NodeInput::Var(self.0)],
             out_shapes: vec![a.shape().to_vec()],
         })
     }
@@ -212,7 +212,7 @@ impl OpBuilder for Mse {
         }
         Ok(OpDescriptor {
             op: MseImpl,
-            inputs: vec![self.0, self.1],
+            inputs: vec![NodeInput::Var(self.0), NodeInput::Var(self.1)],
             out_shapes: vec![a.shape().to_vec()],
         })
     }
@@ -260,7 +260,8 @@ impl OpBuilder for Lstm {
         }
         Ok(OpDescriptor {
             op: LstmImpl::new(ctx, batch_size, input_size, hidden_size),
-            inputs: vec![self.0, self.1],
+            inputs: vec![NodeInput::Var(self.0), NodeInput::Var(self.1),
+                         NodeInput::Recurrent(0), NodeInput::Recurrent(1)],
             out_shapes: vec![vec![batch_size, hidden_size], vec![batch_size, hidden_size]],
         })
     }
@@ -384,10 +385,10 @@ impl Operation for LstmImpl {
         let d_h = &v.get(node.out_grad[0].get());
         let d_c = &v.get(node.out_grad[1].get());
 
-        // NOTE: d_c and d_prev_c are actually the same underlying buffer. We use different aliases
-        // for clarity.
-        // NOTE: d_h and d_prev_h are actually the same underlying buffer. We use different aliases
-        // for clarity.
+        // NOTE: unless the layer is unrolled, d_c and d_prev_c are actually the same underlying
+        // buffer. We use different aliases for clarity.
+        // NOTE: unless the layer is unrolled, d_h and d_prev_h are actually the same underlying
+        // buffer. We use different aliases for clarity.
 
         //tanhCt = Ct[t]
         //dIFOGf[t,:,2*d:3*d] = tanhCt * dHout[t]

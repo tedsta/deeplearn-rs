@@ -9,6 +9,12 @@ use super::init::Initializer;
 use super::op::{OpBuilder, OpDescriptor, Operation};
 use super::var_store::{VarIndex, VarStore};
 
+#[derive(Copy, Clone)]
+pub enum NodeInput {
+    Var(VarIndex),    // Regular input variable
+    Recurrent(usize), // Recurrent connection
+}
+
 pub struct Node {
     pub inputs: Vec<VarIndex>,
     pub outputs: Vec<VarIndex>,
@@ -57,6 +63,14 @@ impl Graph {
             outputs.push(var_index);
             self.out_var_map.insert(var_index, (node_index, i));
         }
+        // Convert array of NodeInputs to VarIndexes
+        let inputs: Vec<VarIndex> =
+            inputs.into_iter().map(|input| {
+                match input {
+                    NodeInput::Var(v) => v,
+                    NodeInput::Recurrent(out) => outputs[out],
+                }
+            }).collect();
         // Create gradients on input variables
         let mut in_grad = vec![];
         for input in &inputs {
