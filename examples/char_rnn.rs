@@ -1,6 +1,7 @@
 extern crate deeplearn;
 extern crate gpuarray as ga;
 
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{
     self,
@@ -15,7 +16,10 @@ use deeplearn::op::Relu;
 use ga::Array;
 
 fn main() {
-    let batch_size = 5;
+    let batch_size = 1;
+
+    let (char_map, lines) = load_char_rnn_data("data/bible.txt").unwrap();
+    println!("Loaded char rnn data");
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
     // Build the graph
@@ -52,4 +56,31 @@ fn main() {
     // Train and validate the network
 
     // TODO
+}
+
+pub fn load_char_rnn_data<P: AsRef<Path>>(path: P)
+    -> io::Result<(HashMap<u8, Array<f32>>, Vec<Vec<u8>>)>
+{
+    use std::io::BufRead;
+
+    let ref mut file = BufReader::new(File::open(path).unwrap());
+
+    let mut unique_chars = HashSet::new();
+    let mut lines = vec![];
+
+    for line in file.lines() {
+        let line: String = try!(line);
+        for c in line.as_bytes() {
+            unique_chars.insert(*c);
+        }
+        lines.push(line.as_bytes().to_owned());
+    }
+
+    let char_classes = unique_chars.len();
+    let mut char_map = HashMap::new();
+    for (i, c) in unique_chars.into_iter().enumerate() {
+        char_map.insert(c, util::one_hot_row(i, char_classes));
+    }
+
+    Ok((char_map, lines))
 }

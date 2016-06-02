@@ -21,9 +21,7 @@ fn main() {
     println!("Reading training labels...");
     let train_labels = read_mnist_labels("data/mnist/train-labels-idx1-ubyte", None).unwrap();
     println!("Label count: {}", train_labels.len());
-    /*let train_labels_logits: Vec<Array<f32>> = train_labels.iter().cloned()
-                                                           .map(|x| util::one_hot_rows(x, 10))
-                                                           .collect();*/
+
     // Build label batches
     let train_labels_logits: Vec<Array<f32>> =
         (0usize..train_labels.len()/batch_size)

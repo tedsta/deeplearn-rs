@@ -2,7 +2,7 @@ use std::num::{Zero, One};
 
 use ga::Array;
 
-pub fn one_hot_rows<N, M>(label: N, classes: N) -> Array<M>
+pub fn one_hot_row<N, M>(label: N, classes: N) -> Array<M>
     where usize: From<N>,
           M:     Clone+Zero+One,
 {
