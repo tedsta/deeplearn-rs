@@ -212,9 +212,9 @@ impl OutGrad {
     fn maybe_sum(&self, ctx: &ga::Context, var_store: &mut VarStore) {
         if self.gradients.len() > 0 {
             if let Some(sum) = self.gradient {
-                ga::copy_to(ctx, &var_store.get(self.gradients[0]), &var_store.get_mut(sum));
+                ga::copy_to(ctx, &var_store.get(self.gradients[0]), &var_store.get(sum));
                 for grad in &self.gradients[1..] {
-                    ga::add(ctx, &var_store.get(sum), -1, &var_store.get(*grad), &var_store.get_mut(sum));
+                    ga::add(ctx, &var_store.get(sum), -1, &var_store.get(*grad), &var_store.get(sum));
                 }
             }
         }
