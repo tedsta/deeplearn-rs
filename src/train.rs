@@ -24,12 +24,18 @@ impl Trainer {
             graph.forward();
             graph.backward();
 
-            // Apply gradients
-            for &(learn, learn_d) in graph.learnables().iter() {
-                ga::add(graph.context(), &learn.get(graph), -1, &learn_d.get(graph), &learn.get(graph));
-            }
+            apply_gradients(graph);
 
             update_fn(graph, epoch);
         }
+    }
+}
+
+
+pub fn apply_gradients(graph: &Graph) {
+    // Apply gradients
+    for &(learn, learn_d) in graph.learnables().iter() {
+        //println!("{:?}", learn_d.get(graph).get(graph.context()));
+        ga::add(graph.context(), &learn.get(graph), -1, &learn_d.get(graph), &learn.get(graph));
     }
 }

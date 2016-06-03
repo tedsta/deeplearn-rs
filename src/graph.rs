@@ -20,6 +20,8 @@ pub struct Node {
     pub outputs: Vec<VarIndex>,
     pub in_grad: Vec<VarIndex>, // gradients on inputs
     pub out_grad: Vec<OutGrad>, // gradients on outputs
+    pub back_dep: Vec<VarIndex>,
+    pub back_dep_cache: Vec<Vec<Array<f32>>>,
 }
 
 pub struct Graph {
@@ -31,6 +33,7 @@ pub struct Graph {
     // Gradients on variables that are inputs to the graph - they have no corresponding node
     in_var_map: HashMap<VarIndex, usize>,
     learnables: Vec<(VarIndex, GradIndex)>, // Learnable variables
+    rnn_learnable_accum: Vec<VarIndex>,
     in_grad: Vec<OutGrad>, // Gradients on variables that are inputs to the graph
 
     rng: rand::ThreadRng,
@@ -46,6 +49,7 @@ impl Graph {
             out_var_map: HashMap::new(),
             in_var_map: HashMap::new(),
             learnables: vec![],
+            rnn_learnable_accum: vec![],
             in_grad: vec![],
             rng: rand::thread_rng(),
         }
@@ -54,7 +58,8 @@ impl Graph {
     pub fn add_node<T: OpBuilder>(&mut self, op: T) -> NodeIndex {
         let node_index = NodeIndex(self.nodes.len());
 
-        let OpDescriptor { op, inputs: node_inputs, out_shapes } = op.build(&self.ctx, &self.var_store).unwrap();
+        let OpDescriptor { op, inputs: node_inputs, out_shapes, back_dep } =
+            op.build(&self.ctx, &mut self.var_store).unwrap();
 
         // Create output variables
         let mut outputs = vec![];
@@ -85,7 +90,9 @@ impl Graph {
         self.nodes.push(Node { inputs: inputs,
                                outputs: outputs,
                                in_grad: in_grad,
-                               out_grad: out_grad });
+                               out_grad: out_grad,
+                               back_dep: back_dep,
+                               back_dep_cache: vec![] });
         // Add the corresponding node op
         self.node_ops.push(Box::new(op));
         node_index
@@ -95,11 +102,12 @@ impl Graph {
                                         shape: Vec<usize>,
                                         learnable: bool,
                                         init: I) -> VarIndex {
-        let a = init.init(&mut self.rng, shape);
+        let a = init.init(&mut self.rng, shape.clone());
         let v = self.var_store.add(Tensor::from_array(&self.ctx, &a, TensorMode::Mut));
         self.in_var_map.insert(v, self.in_grad.len());
         if learnable {
             self.learnables.push((v, GradIndex::InVar(self.in_grad.len())));
+            self.rnn_learnable_accum.push(self.var_store.add(Tensor::new(&self.ctx, shape, TensorMode::Mut)));
         }
         self.in_grad.push(OutGrad::new());
         v
@@ -175,6 +183,53 @@ impl Graph {
             op.backward(&self.ctx, &mut self.var_store, node);
         }
     }
+    
+    pub fn forward_rnn(&mut self, t: usize) {
+        for (node, op) in self.nodes.iter_mut().zip(&mut self.node_ops) {
+            op.forward(&self.ctx, &self.var_store, node);
+            let mut back_dep_step = vec![];
+            for back_dep in &node.back_dep {
+                back_dep_step.push(self.var_store.get(*back_dep).get(&self.ctx));
+            }
+            node.back_dep_cache.push(back_dep_step);
+        }
+    }
+
+    pub fn backward_rnn(&mut self, t: usize) {
+        for (node, op) in self.nodes.iter_mut().rev().zip(self.node_ops.iter_mut().rev()) {
+            // Sum the gradients on each output if there are multiple gradients
+            for out_grad in &node.out_grad {
+                out_grad.maybe_sum(self.ctx.as_ref(), &self.var_store);
+            }
+            for (back_dep, cached) in node.back_dep.iter().zip(node.back_dep_cache[t].iter()) {
+                self.var_store.get(*back_dep).set(&self.ctx, cached);
+            }
+            op.backward(&self.ctx, &self.var_store, node);
+        }
+        for (&(_, learn_grad), learn_accum) in self.learnables.iter().zip(self.rnn_learnable_accum.iter()) {
+            if let GradIndex::InVar(in_grad_index) = learn_grad {
+                ga::add(&self.ctx, &self.var_store.get(self.in_grad[in_grad_index].get()), -1,
+                        &self.var_store.get(*learn_accum), &self.var_store.get(*learn_accum));
+            } else {
+                unreachable!();
+            }
+        }
+    }
+
+    pub fn reset_rnn(&mut self) {
+        for (&(_, learn_grad), learn_accum) in self.learnables.iter().zip(self.rnn_learnable_accum.iter()) {
+            if let GradIndex::InVar(in_grad_index) = learn_grad {
+                ga::copy_to(&self.ctx, &self.var_store.get(*learn_accum),
+                            &self.var_store.get(self.in_grad[in_grad_index].get()));
+            } else {
+                unreachable!();
+            }
+        }
+        for (node, op) in self.nodes.iter_mut().zip(&mut self.node_ops) {
+            node.back_dep_cache.clear();
+            op.reset_rnn(&self.ctx, &mut self.var_store, node);
+        }
+    }
 
     pub fn context(&self) -> &ga::Context {
         &self.ctx
@@ -209,7 +264,7 @@ impl OutGrad {
         self.gradient
     }
 
-    fn maybe_sum(&self, ctx: &ga::Context, var_store: &mut VarStore) {
+    fn maybe_sum(&self, ctx: &ga::Context, var_store: &VarStore) {
         if self.gradients.len() > 0 {
             if let Some(sum) = self.gradient {
                 ga::copy_to(ctx, &var_store.get(self.gradients[0]), &var_store.get(sum));

@@ -7,12 +7,13 @@ use super::var_store::{VarIndex, VarStore};
 pub trait Operation : 'static {
     fn forward(&mut self, &ga::Context, &VarStore, &Node);
     fn backward(&mut self, &ga::Context, &VarStore, &Node);
+    fn reset_rnn(&mut self, _: &ga::Context, _: &VarStore, _: &Node) { }
 }
 
 pub trait OpBuilder {
     type Op: Operation;
 
-    fn build(&self, ctx: &ga::Context, v: &VarStore)
+    fn build(&self, ctx: &ga::Context, v: &mut VarStore)
              -> Result<OpDescriptor<Self::Op>, String>;
 }
 
@@ -20,6 +21,7 @@ pub struct OpDescriptor<T: Operation> {
     pub op: T,
     pub inputs: Vec<NodeInput>,
     pub out_shapes: Vec<Vec<usize>>,
+    pub back_dep: Vec<VarIndex>, // Dependencies for backward pass
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -29,33 +31,35 @@ pub struct MatMul(pub VarIndex, pub VarIndex);
 impl OpBuilder for MatMul {
     type Op = MatMulImpl;
 
-    fn build(&self, ctx: &ga::Context, v: &VarStore)
+    fn build(&self, ctx: &ga::Context, v: &mut VarStore)
              -> Result<OpDescriptor<MatMulImpl>, String> {
-        let a = &v.get(self.0);
-        let b = &v.get(self.1);
-        if a.shape()[1] != b.shape()[0] {
+        let a_shape = v.get(self.0).shape().to_vec();
+        let b_shape = v.get(self.1).shape().to_vec();
+        if a_shape[1] != b_shape[0] {
             return Err(format!("DIM ERROR: Shapes must be of form [I, J] and [J, K]
                                 (got {:?} and {:?}) for MatMul",
-                               a.shape(), b.shape()));
+                               a_shape, b_shape));
         }
+        let out_shape = vec![a_shape[0], b_shape[1]];
         Ok(OpDescriptor {
-            op: MatMulImpl::new(ctx, a.shape().to_vec(), b.shape().to_vec()),
+            op: MatMulImpl::new(ctx, v, a_shape, b_shape),
             inputs: vec![NodeInput::Var(self.0), NodeInput::Var(self.1)],
-            out_shapes: vec![vec![a.shape()[0], b.shape()[1]]],
+            out_shapes: vec![out_shape],
+            back_dep: vec![self.0, self.1],
         })
     }
 }
 
 pub struct MatMulImpl {
-    a_t: Tensor<f32>,
-    b_t: Tensor<f32>,
+    a_t: VarIndex,
+    b_t: VarIndex,
 }
 
 impl MatMulImpl {
-    pub fn new(ctx: &ga::Context, a_shape: Vec<usize>, b_shape: Vec<usize>) -> Self {
+    pub fn new(ctx: &ga::Context, v: &mut VarStore, a_shape: Vec<usize>, b_shape: Vec<usize>) -> Self {
         MatMulImpl {
-            a_t: Tensor::new(ctx, vec![a_shape[1], a_shape[0]], TensorMode::Mut),
-            b_t: Tensor::new(ctx, vec![b_shape[1], b_shape[0]], TensorMode::Mut),
+            a_t: v.add(Tensor::new(ctx, vec![a_shape[1], a_shape[0]], TensorMode::Mut)),
+            b_t: v.add(Tensor::new(ctx, vec![b_shape[1], b_shape[0]], TensorMode::Mut)),
         }
     }
 }
@@ -77,13 +81,13 @@ impl Operation for MatMulImpl {
         
         // Derivative with respect to first input
         // a_d = g*b_t
-        ga::transpose(ctx, b, &self.b_t);
-        ga::matmul(ctx, g, &self.b_t, a_d);
+        ga::transpose(ctx, b, &v.get(self.b_t));
+        ga::matmul(ctx, g, &v.get(self.b_t), a_d);
 
         // Derivative with respect to second input
         // b_d = a_t*g
-        ga::transpose(ctx, a, &self.a_t);
-        ga::matmul(ctx, &self.a_t, g, b_d);
+        ga::transpose(ctx, a, &v.get(self.a_t));
+        ga::matmul(ctx, &v.get(self.a_t), g, b_d);
     }
 }
 
@@ -94,7 +98,7 @@ pub struct Add(pub VarIndex, pub VarIndex, pub i32);
 impl OpBuilder for Add {
     type Op = AddImpl;
 
-    fn build(&self, _: &ga::Context, v: &VarStore)
+    fn build(&self, _: &ga::Context, v: &mut VarStore)
              -> Result<OpDescriptor<AddImpl>, String> {
         let a = &v.get(self.0);
         let b = &v.get(self.1);
@@ -126,7 +130,8 @@ impl OpBuilder for Add {
         Ok(OpDescriptor {
             op: AddImpl::new(add_axis),
             inputs: vec![NodeInput::Var(self.0), NodeInput::Var(self.1)],
-            out_shapes: vec![a.shape().to_vec()]
+            out_shapes: vec![a.shape().to_vec()],
+            back_dep: vec![],
         })
     }
 }
@@ -167,13 +172,14 @@ pub struct Relu(pub VarIndex);
 impl OpBuilder for Relu {
     type Op = ReluImpl;
 
-    fn build(&self, _: &ga::Context, v: &VarStore)
+    fn build(&self, _: &ga::Context, v: &mut VarStore)
              -> Result<OpDescriptor<ReluImpl>, String> {
         let a = &v.get(self.0);
         Ok(OpDescriptor {
             op: ReluImpl,
             inputs: vec![NodeInput::Var(self.0)],
             out_shapes: vec![a.shape().to_vec()],
+            back_dep: vec![self.0],
         })
     }
 }
@@ -203,7 +209,7 @@ pub struct Mse(pub VarIndex, pub VarIndex);
 impl OpBuilder for Mse {
     type Op = MseImpl;
 
-    fn build(&self, _: &ga::Context, v: &VarStore)
+    fn build(&self, _: &ga::Context, v: &mut VarStore)
              -> Result<OpDescriptor<MseImpl>, String> {
         let a = &v.get(self.0);
         let b = &v.get(self.1);
@@ -214,6 +220,7 @@ impl OpBuilder for Mse {
             op: MseImpl,
             inputs: vec![NodeInput::Var(self.0), NodeInput::Var(self.1)],
             out_shapes: vec![a.shape().to_vec()],
+            back_dep: vec![self.0, self.1],
         })
     }
 }
@@ -246,40 +253,42 @@ pub struct Lstm(pub VarIndex, pub VarIndex, pub usize);
 impl OpBuilder for Lstm {
     type Op = LstmImpl;
 
-    fn build(&self, ctx: &ga::Context, v: &VarStore)
+    fn build(&self, ctx: &ga::Context, v: &mut VarStore)
              -> Result<OpDescriptor<LstmImpl>, String> {
-        let x = &v.get(self.0);
-        let w = &v.get(self.1);
-        let batch_size = x.shape()[0];
-        let input_size = x.shape()[1];
+        let batch_size = v.get(self.0).shape()[0];
+        let input_size = v.get(self.0).shape()[1];
         let hidden_size = self.2;
-        if w.shape()[0] != 1+input_size+hidden_size || w.shape()[1] != 4*hidden_size {
+        if v.get(self.1).shape()[0] != 1+input_size+hidden_size || v.get(self.1).shape()[1] != 4*hidden_size {
             return Err(format!("DIM ERROR: LSTM expects weight matrix shape of
                                 [1+input_size+hidden_size, 4*hidden_size], got {:?}",
-                               w.shape()));
+                               v.get(self.1).shape()));
         }
+        let lstm_impl = LstmImpl::new(ctx, v, batch_size, input_size, hidden_size);
+        let h_in = lstm_impl.h_in;
+        let ifog_f = lstm_impl.ifog_f;
         Ok(OpDescriptor {
-            op: LstmImpl::new(ctx, batch_size, input_size, hidden_size),
+            op: lstm_impl,
             inputs: vec![NodeInput::Var(self.0), NodeInput::Var(self.1),
                          NodeInput::Recurrent(0), NodeInput::Recurrent(1)],
             out_shapes: vec![vec![batch_size, hidden_size], vec![batch_size, hidden_size]],
+            back_dep: vec![h_in, ifog_f],
         })
     }
 }
 
 pub struct LstmImpl {
-    h_in: ga::Tensor<f32>, // Concatonated input and previous output
-    d_h_in: ga::Tensor<f32>,
-    ifog: ga::Tensor<f32>, // input, forget, output, gate (IFOG): input sums
-    d_ifog: ga::Tensor<f32>,
-    ifog_f: ga::Tensor<f32>, // input, forget, output, gate: activations
-    d_ifog_f: ga::Tensor<f32>,
-    d_c_inner: ga::Tensor<f32>,
-    c_f: ga::Tensor<f32>, // tanh of C
-    d_c_f: ga::Tensor<f32>,
+    h_in: VarIndex, // Concatonated input and previous output
+    d_h_in: VarIndex,
+    ifog: VarIndex, // input, forget, output, gate (IFOG): input sums
+    d_ifog: VarIndex,
+    ifog_f: VarIndex, // input, forget, output, gate: activations
+    d_ifog_f: VarIndex,
+    d_c_inner: VarIndex,
+    c_f: VarIndex, // tanh of C
+    d_c_f: VarIndex,
 
-    h_in_t: ga::Tensor<f32>,
-    wlstm_t: ga::Tensor<f32>,
+    h_in_t: VarIndex,
+    wlstm_t: VarIndex,
 
     input_size: usize,
     hidden_size: usize,
@@ -287,6 +296,7 @@ pub struct LstmImpl {
 
 impl LstmImpl {
     fn new(ctx: &ga::Context,
+           v: &mut VarStore,
            batch_size: usize,
            input_size: usize,
            hidden_size: usize) -> Self {
@@ -294,22 +304,23 @@ impl LstmImpl {
         let d = hidden_size;
 
         let h_in = Tensor::new(ctx, vec![b, 1 + input_size + d], TensorMode::Mut);
+
         // Fill first column of h_in with 1's to be multiplied by the biases in the weights matrix
         ga::fill_slice(ctx, &h_in.slice(s![.., 0]), 1.0);
 
         LstmImpl {
-            h_in: h_in,
-            d_h_in: Tensor::new(ctx, vec![b, 1 + input_size + d], TensorMode::Mut),
-            ifog: Tensor::new(ctx, vec![b, d*4], TensorMode::Mut),
-            d_ifog: Tensor::new(ctx, vec![b, d*4], TensorMode::Mut),
-            ifog_f: Tensor::new(ctx, vec![b, d*4], TensorMode::Mut),
-            d_ifog_f: Tensor::new(ctx, vec![b, d*4], TensorMode::Mut),
-            d_c_inner: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
-            c_f: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
-            d_c_f: Tensor::new(ctx, vec![b, d], TensorMode::Mut),
+            h_in: v.add(h_in),
+            d_h_in: v.add(Tensor::new(ctx, vec![b, 1 + input_size + d], TensorMode::Mut)),
+            ifog: v.add(Tensor::new(ctx, vec![b, d*4], TensorMode::Mut)),
+            d_ifog: v.add(Tensor::new(ctx, vec![b, d*4], TensorMode::Mut)),
+            ifog_f: v.add(Tensor::new(ctx, vec![b, d*4], TensorMode::Mut)),
+            d_ifog_f: v.add(Tensor::new(ctx, vec![b, d*4], TensorMode::Mut)),
+            d_c_inner: v.add(Tensor::new(ctx, vec![b, d], TensorMode::Mut)),
+            c_f: v.add(Tensor::new(ctx, vec![b, d], TensorMode::Mut)),
+            d_c_f: v.add(Tensor::new(ctx, vec![b, d], TensorMode::Mut)),
 
-            h_in_t: Tensor::new(ctx, vec![1+input_size+d, b], TensorMode::Mut),
-            wlstm_t: Tensor::new(ctx, vec![4*d, 1+input_size+d], TensorMode::Mut),
+            h_in_t: v.add(Tensor::new(ctx, vec![1+input_size+d, b], TensorMode::Mut)),
+            wlstm_t: v.add(Tensor::new(ctx, vec![4*d, 1+input_size+d], TensorMode::Mut)),
 
             input_size: input_size,
             hidden_size: hidden_size,
@@ -327,14 +338,19 @@ impl Operation for LstmImpl {
         let prev_h = &v.get(node.inputs[2]); // Output from last timestep
         let prev_c = &v.get(node.inputs[3]); // C from last timestep
 
-        let ref h_in = self.h_in;
+        let ref h_in = v.get(self.h_in);
 
-        let ref ifog = self.ifog;
-        let ref ifog_f = self.ifog_f;
-        let ref c_f = self.c_f;
+        let ref ifog = v.get(self.ifog);
+        let ref ifog_f = v.get(self.ifog_f);
+        let ref c_f = v.get(self.c_f);
 
         let h = &v.get(node.outputs[0]); // output
         let c = &v.get(node.outputs[1]); // cell
+
+        // NOTE: unless the layer is unrolled, c and prev_c are actually the same underlying buffer.
+        // We use different aliases for clarity.
+        // NOTE: unless the layer is unrolled, h and prev_h are actually the same underlying buffer.
+        // We use different aliases for clarity.
 
         // Input
         ga::copy_to_slice(ctx, &x.slice(s![..]), &h_in.slice(s![.., 1..input_size+1]));
@@ -367,18 +383,18 @@ impl Operation for LstmImpl {
         let d_prev_h = &v.get(node.in_grad[2]);
         let d_prev_c = &v.get(node.in_grad[3]);
 
-        let ref h_in = self.h_in;
-        let ref d_h_in = self.d_h_in;
+        let ref h_in = v.get(self.h_in);
+        let ref d_h_in = v.get(self.d_h_in);
 
-        let ref h_in_t = self.h_in_t;
-        let ref wlstm_t = self.wlstm_t;
+        let ref h_in_t = v.get(self.h_in_t);
+        let ref wlstm_t = v.get(self.wlstm_t);
 
-        let ref d_ifog = self.d_ifog;
-        let ref ifog_f = self.ifog_f;
-        let ref d_ifog_f = self.d_ifog_f;
-        let ref d_c_inner = self.d_c_inner;
-        let ref c_f = self.c_f;
-        let ref d_c_f = self.d_c_f;
+        let ref d_ifog = v.get(self.d_ifog);
+        let ref ifog_f = v.get(self.ifog_f);
+        let ref d_ifog_f = v.get(self.d_ifog_f);
+        let ref d_c_inner = v.get(self.d_c_inner);
+        let ref c_f = v.get(self.c_f);
+        let ref d_c_f = v.get(self.d_c_f);
 
         let c = &v.get(node.outputs[1]); // cell
 
@@ -438,5 +454,12 @@ impl Operation for LstmImpl {
         //dHout[t-1,:] += dHin[t,:,input_size+1:]
         // XXX
         ga::copy_to_slice(ctx, &d_h_in.slice(s![.., input_size+1..]), &d_prev_h.slice(s![..]));
+    }
+
+    fn reset_rnn(&mut self, ctx: &ga::Context, v: &VarStore, node: &Node) {
+        let prev_h = &v.get(node.inputs[2]); // H from last timestep
+        let prev_c = &v.get(node.inputs[3]); // C from last timestep
+        ga::fill(ctx, prev_h, 0.0);
+        ga::fill(ctx, prev_c, 0.0);
     }
 }

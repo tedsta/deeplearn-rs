@@ -11,7 +11,7 @@ use std::io::{
 use std::path::Path;
 use std::rc::Rc;
 
-use deeplearn::{init, layers, util, Graph};
+use deeplearn::{init, layers, util, train, Graph};
 use deeplearn::op::Relu;
 use ga::Array;
 
@@ -34,11 +34,11 @@ fn main() {
 
     // Layer 1
     // LSTM layer with 200 cells
-    let (l1_out, _) = layers::lstm(graph, input, 200, init::Normal(0.001, 0.005));
+    let (l1_out, _) = layers::lstm(graph, input, 200, init::Normal(0.1, 0.5));
 
     // Layer 2
     // LSTM layer with 200 cells
-    let (l2_out, _) = layers::lstm(graph, l1_out, 200, init::Normal(0.001, 0.005));
+    let (l2_out, _) = layers::lstm(graph, l1_out, 200, init::Normal(0.1, 0.5));
 
     // Layer 3
     // Biased fully connected layer with 26 neurons and ReLU activation
@@ -55,17 +55,29 @@ fn main() {
     // Train and validate the network
 
     // We apply a gradient of -0.001 to the loss function
-    let loss_d_cpu = Array::new(vec![batch_size, char_classes], -0.001);
+    let loss_d_cpu = Array::new(vec![batch_size, char_classes], -0.01);
     loss_d.write(graph, &loss_d_cpu);
 
+    let samples = 500;
+    let mut i = 0;
     for line in &lines {
         for t in 1..line.len() {
             input.write(graph, &char_map[&line[t-1]]);
             train_out.write(graph, &char_map[&line[t]]);
-            graph.forward();
+            graph.forward_rnn(t-1);
         }
         for t in (1..line.len()).rev() {
-            graph.backward();
+            graph.backward_rnn(t-1);
+        }
+
+        graph.reset_rnn();
+        train::apply_gradients(graph);
+
+        println!("{}", i);
+
+        i += 1;
+        if i > samples {
+            break;
         }
     }
 
