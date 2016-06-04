@@ -182,6 +182,9 @@ impl Graph {
             }
             op.backward(&self.ctx, &mut self.var_store, node);
         }
+        for grad in &self.in_grad {
+            grad.maybe_sum(self.ctx.as_ref(), &mut self.var_store);
+        }
     }
     
     pub fn forward_rnn(&mut self, t: usize) {

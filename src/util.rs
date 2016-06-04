@@ -2,6 +2,8 @@ use std::num::{Zero, One};
 
 use ga::Array;
 
+use graph::Graph;
+
 pub fn one_hot_row<N, M>(label: N, classes: N) -> Array<M>
     where usize: From<N>,
           M:     Clone+Zero+One,
@@ -44,4 +46,19 @@ pub fn argmax_rows(a: &Array<f32>, out: &mut Array<usize>) {
         }
         out[&[row]] = max_col;
     }
+}
+
+pub fn unrolled_net<F, I, O>(graph: &mut Graph, unroll_steps: usize, first_inputs: I, mut net_step: F) -> (I, Vec<O>)
+                    where F: FnMut(&mut Graph, I) -> (I, O),
+{
+
+    let mut next_inputs = first_inputs;
+    let mut steps = vec![];
+    for _ in 0..unroll_steps {
+        let (_next_inputs, step_out) = net_step(graph, next_inputs);
+        next_inputs = _next_inputs;
+        steps.push(step_out);
+    }
+
+    (next_inputs, steps)
 }

@@ -167,6 +167,114 @@ impl Operation for AddImpl {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// Softmax(input)
+pub struct Softmax(pub VarIndex);
+
+impl OpBuilder for Softmax {
+    type Op = SoftmaxImpl;
+
+    fn build(&self, ctx: &ga::Context, v: &mut VarStore)
+             -> Result<OpDescriptor<SoftmaxImpl>, String> {
+        let batches = v.get(self.0).shape()[0];
+        let classes = v.get(self.0).shape()[1];
+        Ok(OpDescriptor {
+            op: SoftmaxImpl::new(ctx, v, batches),
+            inputs: vec![NodeInput::Var(self.0)],
+            out_shapes: vec![vec![batches, classes]],
+            back_dep: vec![],
+        })
+    }
+}
+
+pub struct SoftmaxImpl {
+    exp_sum: VarIndex,
+}
+
+impl SoftmaxImpl {
+    pub fn new(ctx: &ga::Context, v: &mut VarStore, batches: usize) -> Self {
+        SoftmaxImpl {
+            exp_sum: v.add(Tensor::new(ctx, vec![batches, 1], TensorMode::Mut)),
+        }
+    }
+}
+
+impl Operation for SoftmaxImpl {
+    fn forward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
+        let input = &v.get(n.inputs[0]);
+        let prob = &v.get(n.outputs[0]);
+
+        let exp_sum = &v.get(self.exp_sum);
+
+        ga::exp(ctx, input, prob);
+        ga::sum(ctx, prob, 1, exp_sum);
+        ga::divide(ctx, prob, 1, exp_sum, prob);
+    }
+
+    fn backward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
+        let input_d = &v.get(n.in_grad[0]);
+        let prob_d = &v.get(n.out_grad[0].get());
+
+        ga::copy_to(ctx, prob_d, input_d);
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// CrossEntropy(prob, true_prob)
+pub struct CrossEntropy(pub VarIndex, pub VarIndex);
+
+impl OpBuilder for CrossEntropy {
+    type Op = CrossEntropyImpl;
+
+    fn build(&self, _: &ga::Context, v: &mut VarStore)
+             -> Result<OpDescriptor<CrossEntropyImpl>, String> {
+        let prob = &v.get(self.0);
+        let true_prob = &v.get(self.1);
+        if prob.shape() != true_prob.shape() {
+            return Err("DIM ERROR: Shapes must be equal for CrossEntropy".to_string());
+        }
+        Ok(OpDescriptor {
+            op: CrossEntropyImpl::new(),
+            inputs: vec![NodeInput::Var(self.0), NodeInput::Var(self.1)],
+            out_shapes: vec![prob.shape().to_vec()],
+            back_dep: vec![],
+        })
+    }
+}
+
+pub struct CrossEntropyImpl;
+
+impl CrossEntropyImpl {
+    pub fn new() -> Self {
+        CrossEntropyImpl
+    }
+}
+
+impl Operation for CrossEntropyImpl {
+    fn forward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
+        let prob = &v.get(n.inputs[0]);
+        let true_prob = &v.get(n.inputs[1]);
+        let loss = &v.get(n.outputs[0]);
+
+        ga::log(ctx, prob, loss);
+        ga::negate(ctx, loss, loss);
+        ga::multiply(ctx, loss, -1, true_prob, loss);
+    }
+
+    fn backward(&mut self, ctx: &ga::Context, v: &VarStore, n: &Node) {
+        let prob = &v.get(n.inputs[0]);
+        let true_prob = &v.get(n.inputs[1]);
+
+        let prob_d = &v.get(n.in_grad[0]);
+        let loss_d = &v.get(n.out_grad[0].get());
+
+        ga::sub(ctx, prob, true_prob, prob_d);
+        ga::multiply(ctx, prob_d, -1, loss_d, prob_d);
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub struct Relu(pub VarIndex);
 
 impl OpBuilder for Relu {
@@ -270,6 +378,35 @@ impl OpBuilder for Lstm {
             op: lstm_impl,
             inputs: vec![NodeInput::Var(self.0), NodeInput::Var(self.1),
                          NodeInput::Recurrent(0), NodeInput::Recurrent(1)],
+            out_shapes: vec![vec![batch_size, hidden_size], vec![batch_size, hidden_size]],
+            back_dep: vec![h_in, ifog_f],
+        })
+    }
+}
+
+// LstmUnrolled(input, state, prev_h, prev_c)
+pub struct LstmUnrolled(pub VarIndex, pub VarIndex, pub VarIndex, pub VarIndex);
+
+impl OpBuilder for LstmUnrolled {
+    type Op = LstmImpl;
+
+    fn build(&self, ctx: &ga::Context, v: &mut VarStore)
+             -> Result<OpDescriptor<LstmImpl>, String> {
+        let batch_size = v.get(self.0).shape()[0];
+        let input_size = v.get(self.0).shape()[1];
+        let hidden_size = v.get(self.2).shape()[1];
+        if v.get(self.1).shape()[0] != 1+input_size+hidden_size || v.get(self.1).shape()[1] != 4*hidden_size {
+            return Err(format!("DIM ERROR: LSTM expects weight matrix shape of
+                                [1+input_size+hidden_size, 4*hidden_size], got {:?}",
+                               v.get(self.1).shape()));
+        }
+        let lstm_impl = LstmImpl::new(ctx, v, batch_size, input_size, hidden_size);
+        let h_in = lstm_impl.h_in;
+        let ifog_f = lstm_impl.ifog_f;
+        Ok(OpDescriptor {
+            op: lstm_impl,
+            inputs: vec![NodeInput::Var(self.0), NodeInput::Var(self.1),
+                         NodeInput::Var(self.2), NodeInput::Var(self.3)],
             out_shapes: vec![vec![batch_size, hidden_size], vec![batch_size, hidden_size]],
             back_dep: vec![h_in, ifog_f],
         })
@@ -399,7 +536,6 @@ impl Operation for LstmImpl {
         let c = &v.get(node.outputs[1]); // cell
 
         let d_h = &v.get(node.out_grad[0].get());
-        let d_c = &v.get(node.out_grad[1].get());
 
         // NOTE: unless the layer is unrolled, d_c and d_prev_c are actually the same underlying
         // buffer. We use different aliases for clarity.
@@ -416,7 +552,9 @@ impl Operation for LstmImpl {
         // XXX
         ga::multiply_slice(ctx, &ifog_f.slice(s![.., 2*d..3*d]), &d_h.slice(s![..]), &d_c_f.slice(s![..]));
         ga::multiply(ctx, d_c_f, -1, d_c_inner, d_c_inner);
-        ga::add(ctx, d_c, -1, d_c_inner, d_c_inner);
+        if let Some(d_c) = node.out_grad[1].try_get() {
+            ga::add(ctx, &v.get(d_c), -1, d_c_inner, d_c_inner);
+        }
 
         //dIFOGf[t,:,d:2*d] = C[t-1] * dC[t]
         ga::multiply_slice(ctx, &prev_c.slice(s![..]), &d_c_inner.slice(s![..]), &d_ifog_f.slice(s![.., d..2*d]));
@@ -447,6 +585,8 @@ impl Operation for LstmImpl {
 
         ga::transpose(ctx, wlstm, wlstm_t);
         ga::matmul(ctx, d_ifog, wlstm_t, d_h_in);
+        //println!("{:?}", d_wlstm.get(ctx));
+        //println!("{:?}", d_h_in.get(ctx));
 
         // backprop the identity transforms into Hin
         //dX[t] = dHin[t,:,1:input_size+1]
