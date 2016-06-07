@@ -33,8 +33,8 @@ fn main() {
     let ctx = Rc::new(ga::Context::new());
     let ref mut graph = Graph::new(ctx.clone());
 
-    let l1_w = graph.add_variable(vec![1+char_classes+l1_size, 4*l1_size], true, init::Normal(0.005, 0.005));
-    let l2_w = graph.add_variable(vec![1+l1_size+l2_size, 4*l2_size], true, init::Normal(0.005, 0.005));
+    let l1_w = graph.add_variable(vec![1+char_classes+l1_size, 4*l1_size], true, init::Normal(0.001, 0.005));
+    let l2_w = graph.add_variable(vec![1+l1_size+l2_size, 4*l2_size], true, init::Normal(0.001, 0.005));
     let l3_w = graph.add_variable(vec![l2_size, char_classes], true, init::Normal(0.001, 0.005));
     let l3_b = graph.add_variable(vec![1, char_classes], true, init::Normal(0.001, 0.005));
     let l1_c0 = graph.add_variable(vec![batch_size, l1_size], false, 0.0);

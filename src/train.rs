@@ -1,7 +1,7 @@
 use graph::Graph;
 use var_store::VarIndex;
 
-use ga::{self, Array};
+use ga::{self, Array, Tensor, TensorMode};
 
 pub struct Trainer;
 
@@ -31,6 +31,21 @@ impl Trainer {
     }
 }
 
+pub struct RmsPropTrainer {
+    cache: Vec<Tensor<f32>>, // gradient cache
+}
+
+impl RmsPropTrainer {
+    pub fn new(graph: &Graph) -> RmsPropTrainer {
+        let cache = graph.learnables().iter().map(
+            |&(_, learn_d)| {
+                Tensor::new(graph.context(), learn_d.get(graph).shape().to_owned(), TensorMode::Mut)
+            }).collect();
+        RmsPropTrainer {
+            cache: cache,
+        }
+    }
+}
 
 pub fn apply_gradients(graph: &Graph) {
     // Apply gradients
