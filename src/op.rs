@@ -207,6 +207,14 @@ impl Operation for SoftmaxImpl {
 
         ga::exp(ctx, input, prob);
         ga::sum(ctx, prob, 1, exp_sum);
+        //println!("{:?}", input.get(ctx));
+        //println!("{:?}", exp_sum.get(ctx)[&[0, 0]]);
+        if exp_sum.get(ctx)[&[0, 0]].is_nan() {
+            panic!("NaN :(");
+        }
+        if exp_sum.get(ctx)[&[0, 0]] == 0.0 {
+            panic!("Zero :(");
+        }
         ga::divide(ctx, prob, 1, exp_sum, prob);
     }
 

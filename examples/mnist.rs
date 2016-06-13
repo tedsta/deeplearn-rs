@@ -10,7 +10,7 @@ use std::io::{
 use std::path::Path;
 use std::rc::Rc;
 
-use deeplearn::{init, layers, util, Graph, Trainer};
+use deeplearn::{init, layers, train, util, Graph};
 use deeplearn::op::Relu;
 use ga::Array;
 
@@ -90,7 +90,7 @@ fn main() {
     // Train and validate the network
 
     // We apply a gradient of -0.001 to the loss function
-    let loss_d_cpu = Array::new(vec![batch_size, 10], -0.001);
+    let loss_d_cpu = Array::new(vec![batch_size, 10], -1.0);
     loss_d.write(graph, &loss_d_cpu);
 
     let mut loss_out_cpu = Array::new(vec![batch_size, 10], 0.0);
@@ -131,8 +131,9 @@ fn main() {
             }
         };
 
-        let trainer = Trainer;
-        trainer.train(graph, train_images.len(), train_update,
+        let trainer = train::Trainer;
+        let rms_prop = train::RmsProp::new(graph, 0.0001, 0.9);
+        trainer.train(graph, &rms_prop, train_images.len(), train_update,
                       &[(input, &train_images), (train_out, &train_labels_logits)]);
     }
 

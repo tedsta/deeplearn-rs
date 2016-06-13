@@ -13,6 +13,7 @@ use std::rc::Rc;
 
 use deeplearn::{init, layers, util, train, Graph};
 use deeplearn::op::Softmax;
+use deeplearn::train::Optimizer;
 use ga::Array;
 
 fn main() {
@@ -33,8 +34,8 @@ fn main() {
     let ctx = Rc::new(ga::Context::new());
     let ref mut graph = Graph::new(ctx.clone());
 
-    let l1_w = graph.add_variable(vec![1+char_classes+l1_size, 4*l1_size], true, init::Normal(0.001, 0.005));
-    let l2_w = graph.add_variable(vec![1+l1_size+l2_size, 4*l2_size], true, init::Normal(0.001, 0.005));
+    let l1_w = graph.add_variable(vec![1+char_classes+l1_size, 4*l1_size], true, init::Normal(0.001, 0.003));
+    let l2_w = graph.add_variable(vec![1+l1_size+l2_size, 4*l2_size], true, init::Normal(0.001, 0.003));
     let l3_w = graph.add_variable(vec![l2_size, char_classes], true, init::Normal(0.001, 0.005));
     let l3_b = graph.add_variable(vec![1, char_classes], true, init::Normal(0.001, 0.005));
     let l1_c0 = graph.add_variable(vec![batch_size, l1_size], false, 0.0);
@@ -53,7 +54,7 @@ fn main() {
             let (loss_out, train_out) = layers::cross_entropy(graph, l3_out);
             let loss_d = graph.add_gradient(loss_out); // Create a gradient to apply to the loss function
             // We apply a gradient of -0.1 to the loss function
-            loss_d.write(graph, &Array::new(loss_d.get(graph).shape().to_owned(), -0.01));
+            loss_d.write(graph, &Array::new(loss_d.get(graph).shape().to_owned(), -1.0));
 
             ((l1_out, l1_c, l2_out, l2_c), (input, l3_out, train_out))
         };
@@ -69,6 +70,8 @@ fn main() {
     let mut l1_w_cpu = Array::new(vec![1+char_classes+l1_size, 4*l1_size], 0.0);
     let mut argmax_out = Array::new(vec![batch_size], 0usize);
 
+    let rmsprop = train::RmsProp::new(graph, 0.01, 0.9);
+
     let samples = 10000;
     let mut i = 0;
     for line in &lines {
@@ -76,13 +79,14 @@ fn main() {
             input.write(graph, &char_map[&line[t-1]]);
             train_out.write(graph, &char_map[&line[t]]);
         }
-        graph.forward();
-        graph.backward();
 
         for (t, &(_, _, _)) in (1..line.len()).zip(steps.iter()) {
             print!("{}", line[t] as char);
         }
         println!("");
+
+        graph.forward();
+        graph.backward();
 
         for (_, &(_, l3_out, _)) in (1..line.len()).zip(steps.iter()) {
             l3_out.read(graph, &mut l3_out_cpu);
@@ -100,7 +104,8 @@ fn main() {
         }
         println!("");
 
-        train::apply_gradients(graph);
+        //train::apply_gradients(graph);
+        rmsprop.update(graph);
 
         println!("{}", i);
 
