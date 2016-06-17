@@ -4,17 +4,30 @@ Deep learning in Rust! This is my first shot at this. It's mostly just a proof o
 
 ### Status
 
-Right now it is the bare minimum required to build and train simple networks that use matrix multiplication, addition, ReLU, and MSE loss. It's enough to train a primitive MNIST classifier, though! Check out the examples.
+We have these models implemented (check out the examples folder):
+- MNIST handwritten digit recognition
+- char-rnn using LSTM
+
+So far, we have the following layers implemented:
+
+- Matrix multiply (fully connected)
+- Add (for bias, for example)
+- LSTM
+- Softmax
+- MSE loss
+- Cross entropy loss
+
+We have the following optimizers:
+- SGD
+- RMSProp
 
 ### Road map
 
-- Cooler layer types (in the order that I'll probably get to them)
-    - LSTM (There's decent progress on this one)
+- More layer types (in the order that I'll probably get to them)
     - Conv2d
     - Pooling
     - Dropout
 - Allow datatypes other than `f32` and implement casting between arrays of primitive numeric types.
-- Implement some special trainers like Ada Grad.
 - Provide utilities for working with data
     - images
     - tsv and csv
