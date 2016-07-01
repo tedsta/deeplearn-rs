@@ -19,7 +19,7 @@ use ga::Array;
 fn main() {
     let batch_size = 1;
 
-    let (char_map, rev_char_map, lines) = load_char_rnn_data("data/bible.txt").unwrap();
+    let (char_map, rev_char_map, lines) = load_char_rnn_data("data/bible_no_verse.txt").unwrap();
     let char_classes = char_map.len();
     println!("Loaded char rnn data");
     println!("Character types: {}", char_classes);
@@ -29,15 +29,15 @@ fn main() {
 
     let batch_size = 1;
     let l1_size = 200;
-    let l2_size = 200;
+    let l2_size = char_classes;
 
     let ctx = Rc::new(ga::Context::new());
     let ref mut graph = Graph::new(ctx.clone());
 
     let l1_w = graph.add_variable(vec![1+char_classes+l1_size, 4*l1_size], true, init::Normal(0.001, 0.003));
     let l2_w = graph.add_variable(vec![1+l1_size+l2_size, 4*l2_size], true, init::Normal(0.001, 0.003));
-    let l3_w = graph.add_variable(vec![l2_size, char_classes], true, init::Normal(0.001, 0.005));
-    let l3_b = graph.add_variable(vec![1, char_classes], true, init::Normal(0.001, 0.005));
+    //let l3_w = graph.add_variable(vec![l2_size, char_classes], true, init::Normal(0.001, 0.005));
+    //let l3_b = graph.add_variable(vec![1, char_classes], true, init::Normal(0.001, 0.005));
     let l1_c0 = graph.add_variable(vec![batch_size, l1_size], false, 0.0);
     let l1_h0 = graph.add_variable(vec![batch_size, l1_size], false, 0.0);
     let l2_c0 = graph.add_variable(vec![batch_size, l2_size], false, 0.0);
@@ -48,15 +48,15 @@ fn main() {
             let input = graph.add_variable(vec![batch_size, char_classes], false, 0.0);
             let (l1_out, l1_c) = layers::lstm_unrolled(graph, input, l1_w, l1_prev_h, l1_prev_c);
             let (l2_out, l2_c) = layers::lstm_unrolled(graph, l1_out, l2_w, l2_prev_h, l2_prev_c);
-            let l3_fcb = layers::dense_biased_manual(graph, l2_out, l3_w, l3_b);
-            let l3_out = layers::activation(graph, Softmax(l3_fcb));
+            //let l3_fcb = layers::dense_biased_manual(graph, l2_out, l3_w, l3_b);
+            //let l3_out = layers::activation(graph, Softmax(l3_fcb));
             // Loss
-            let (loss_out, train_out) = layers::cross_entropy(graph, l3_out);
+            let (loss_out, train_out) = layers::cross_entropy(graph, l2_out);
             let loss_d = graph.add_gradient(loss_out); // Create a gradient to apply to the loss function
             // We apply a gradient of -0.1 to the loss function
             loss_d.write(graph, &Array::new(loss_d.get(graph).shape().to_owned(), -1.0));
 
-            ((l1_out, l1_c, l2_out, l2_c), (input, l3_out, train_out))
+            ((l1_out, l1_c, l2_out, l2_c), (input, l2_out, train_out))
         };
 
     let (last_recur_in, steps) = util::unrolled_net(graph, 25, (l1_h0, l1_c0, l2_h0, l2_c0), net_step);
@@ -70,7 +70,7 @@ fn main() {
     let mut l1_w_cpu = Array::new(vec![1+char_classes+l1_size, 4*l1_size], 0.0);
     let mut argmax_out = Array::new(vec![batch_size], 0usize);
 
-    let rmsprop = train::RmsProp::new(graph, 0.01, 0.9);
+    let rmsprop = train::RmsProp::new(graph, 0.001, 0.9);
 
     let samples = 10000;
     let mut i = 0;
@@ -88,8 +88,8 @@ fn main() {
         graph.forward();
         graph.backward();
 
-        for (_, &(_, l3_out, _)) in (1..line.len()).zip(steps.iter()) {
-            l3_out.read(graph, &mut l3_out_cpu);
+        for (_, &(_, l2_out, _)) in (1..line.len()).zip(steps.iter()) {
+            l2_out.read(graph, &mut l2_out_cpu);
             //l1_w.read(graph, &mut l1_w_cpu);
             //graph.get_gradient(l3_out).read(graph, &mut l3_out_d_cpu);
             //graph.get_gradient(l1_w).read(graph, &mut l1_w_cpu);
@@ -98,7 +98,7 @@ fn main() {
             //println!("{:?}", l3_out_d_cpu);
             //println!("{:?}", l1_w_cpu);
             //println!("{:?}", l2_out_cpu);
-            util::argmax_rows(&l3_out_cpu, &mut argmax_out);
+            util::argmax_rows(&l2_out_cpu, &mut argmax_out);
             let next_char = rev_char_map[&argmax_out[&[0]]];
             print!("{}", next_char as char);
         }
