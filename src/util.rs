@@ -1,4 +1,5 @@
-use std::num::{Zero, One};
+extern crate num;
+use self::num::{Zero, One};
 
 use ga::Array;
 

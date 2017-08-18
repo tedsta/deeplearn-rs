@@ -8,3 +8,4 @@ git = "https://github.com/tedsta/gpuarray-rs"
 
 [dependencies]
 rand = "*"
+num = "*"
