@@ -1,6 +1,5 @@
-#![feature(zero_one)]
-
 #[macro_use] extern crate gpuarray as ga;
+extern crate num;
 extern crate rand;
 
 pub use graph::{Graph, NodeIndex};

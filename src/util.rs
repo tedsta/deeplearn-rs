@@ -1,5 +1,4 @@
-extern crate num;
-use self::num::{Zero, One};
+use num::{Zero, One};
 
 use ga::Array;
 
