@@ -1,12 +1,12 @@
-use ga::{self, Tensor};
-use ga::tensor::TensorMode;
+use ga;
+use ndarray;
 
 use super::graph::{Node, NodeInput};
 use super::var_store::{VarIndex, VarStore};
 
 pub trait Operation : 'static {
-    fn forward(&mut self, &ga::Context, &VarStore, &Node);
-    fn backward(&mut self, &ga::Context, &VarStore, &Node);
+    fn forward(&mut self, _: &ga::Context, _: &VarStore, _: &Node);
+    fn backward(&mut self, _: &ga::Context, _: &VarStore, _: &Node);
     fn reset_rnn(&mut self, _: &ga::Context, _: &VarStore, _: &Node) { }
 }
 
@@ -20,13 +20,13 @@ pub trait OpBuilder {
 pub struct OpDescriptor<T: Operation> {
     pub op: T,
     pub inputs: Vec<NodeInput>,
-    pub out_shapes: Vec<Vec<usize>>,
+    pub out_shapes: Vec<ndarray::IxDyn>,
     pub back_dep: Vec<VarIndex>, // Dependencies for backward pass
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct MatMul(pub VarIndex, pub VarIndex);
+/*pub struct MatMul(pub VarIndex, pub VarIndex);
 
 impl OpBuilder for MatMul {
     type Op = MatMulImpl;
@@ -58,8 +58,8 @@ pub struct MatMulImpl {
 impl MatMulImpl {
     pub fn new(ctx: &ga::Context, v: &mut VarStore, a_shape: Vec<usize>, b_shape: Vec<usize>) -> Self {
         MatMulImpl {
-            a_t: v.add(Tensor::new(ctx, vec![a_shape[1], a_shape[0]], TensorMode::Mut)),
-            b_t: v.add(Tensor::new(ctx, vec![b_shape[1], b_shape[0]], TensorMode::Mut)),
+            a_t: v.add(Tensor::new(ctx, vec![a_shape[1], a_shape[0]], ga::ArrayUsage::read_write())),
+            b_t: v.add(Tensor::new(ctx, vec![b_shape[1], b_shape[0]], ga::ArrayUsage::read_write())),
         }
     }
 }
@@ -193,7 +193,7 @@ pub struct SoftmaxImpl {
 impl SoftmaxImpl {
     pub fn new(ctx: &ga::Context, v: &mut VarStore, batches: usize) -> Self {
         SoftmaxImpl {
-            exp_sum: v.add(Tensor::new(ctx, vec![batches, 1], TensorMode::Mut)),
+            exp_sum: v.add(Tensor::new(ctx, vec![batches, 1], ga::ArrayUsage::read_write())),
         }
     }
 }
@@ -448,24 +448,24 @@ impl LstmImpl {
         let b = batch_size;
         let d = hidden_size;
 
-        let h_in = Tensor::new(ctx, vec![b, 1 + input_size + d], TensorMode::Mut);
+        let h_in = Tensor::new(ctx, vec![b, 1 + input_size + d], ga::ArrayUsage::read_write());
 
         // Fill first column of h_in with 1's to be multiplied by the biases in the weights matrix
         ga::fill_slice(ctx, &h_in.slice(s![.., 0]), 1.0);
 
         LstmImpl {
             h_in: v.add(h_in),
-            d_h_in: v.add(Tensor::new(ctx, vec![b, 1 + input_size + d], TensorMode::Mut)),
-            ifog: v.add(Tensor::new(ctx, vec![b, d*4], TensorMode::Mut)),
-            d_ifog: v.add(Tensor::new(ctx, vec![b, d*4], TensorMode::Mut)),
-            ifog_f: v.add(Tensor::new(ctx, vec![b, d*4], TensorMode::Mut)),
-            d_ifog_f: v.add(Tensor::new(ctx, vec![b, d*4], TensorMode::Mut)),
-            d_c_inner: v.add(Tensor::new(ctx, vec![b, d], TensorMode::Mut)),
-            c_f: v.add(Tensor::new(ctx, vec![b, d], TensorMode::Mut)),
-            d_c_f: v.add(Tensor::new(ctx, vec![b, d], TensorMode::Mut)),
+            d_h_in: v.add(Tensor::new(ctx, vec![b, 1 + input_size + d], ga::ArrayUsage::read_write())),
+            ifog: v.add(Tensor::new(ctx, vec![b, d*4], ga::ArrayUsage::read_write())),
+            d_ifog: v.add(Tensor::new(ctx, vec![b, d*4], ga::ArrayUsage::read_write())),
+            ifog_f: v.add(Tensor::new(ctx, vec![b, d*4], ga::ArrayUsage::read_write())),
+            d_ifog_f: v.add(Tensor::new(ctx, vec![b, d*4], ga::ArrayUsage::read_write())),
+            d_c_inner: v.add(Tensor::new(ctx, vec![b, d], ga::ArrayUsage::read_write())),
+            c_f: v.add(Tensor::new(ctx, vec![b, d], ga::ArrayUsage::read_write())),
+            d_c_f: v.add(Tensor::new(ctx, vec![b, d], ga::ArrayUsage::read_write())),
 
-            h_in_t: v.add(Tensor::new(ctx, vec![1+input_size+d, b], TensorMode::Mut)),
-            wlstm_t: v.add(Tensor::new(ctx, vec![4*d, 1+input_size+d], TensorMode::Mut)),
+            h_in_t: v.add(Tensor::new(ctx, vec![1+input_size+d, b], ga::ArrayUsage::read_write())),
+            wlstm_t: v.add(Tensor::new(ctx, vec![4*d, 1+input_size+d], ga::ArrayUsage::read_write())),
 
             input_size: input_size,
             hidden_size: hidden_size,
@@ -610,4 +610,4 @@ impl Operation for LstmImpl {
         ga::fill(ctx, prev_h, 0.0);
         ga::fill(ctx, prev_c, 0.0);
     }
-}
+}*/

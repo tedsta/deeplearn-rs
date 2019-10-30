@@ -2,10 +2,13 @@
 name = "deeplearn"
 version = "0.1.0"
 authors = ["Theodore DeRego <tderego94@gmail.com>"]
+edition = "2018"
 
-[dependencies.gpuarray]
-git = "https://github.com/tedsta/gpuarray-rs"
+[dependencies.wgpu-array]
+path = "../gpu/wgpu-array"
 
 [dependencies]
 rand = "*"
 num = "*"
+futures-channel-preview = { version="0.3.0-alpha.18" }
+ndarray = "0.12.1"
